@@ -15,10 +15,11 @@ const materialsSchema: ObjectSchema = {
   object: 'materials',
   splits: 8,
   max_key: 64,
-  value_size: 100,
+  max_value: 100,
+  slot_size: 128,
   fields: [{ name: 'name', type: 'varchar', size: 80 }],
   indexes: [],
-  counts: { live: 10, tombstoned: 0 },
+  record_count: 10,
 };
 
 const lineItemsSchema: ObjectSchema = { ...materialsSchema, object: 'line_items' };

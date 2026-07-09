@@ -7,14 +7,15 @@ const materialsSchema: ObjectSchema = {
   object: 'materials',
   splits: 8,
   max_key: 64,
-  value_size: 100,
+  max_value: 100,
+  slot_size: 128,
   fields: [
     { name: 'name', type: 'varchar', size: 80 },
     { name: 'unit_price', type: 'double' },
     { name: 'old_field', type: 'varchar', size: 10, removed: true },
   ],
   indexes: ['category'],
-  counts: { live: 10, tombstoned: 0 },
+  record_count: 10,
 };
 
 describe('buildSystemPrompt', () => {

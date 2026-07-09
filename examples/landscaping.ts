@@ -12,7 +12,8 @@ const MATERIALS_SCHEMA: ObjectSchema = {
   object: 'materials',
   splits: 8,
   max_key: 64,
-  value_size: 142,
+  max_value: 142,
+  slot_size: 168,
   fields: [
     { name: 'name', type: 'varchar', size: 80 },
     { name: 'unit_price', type: 'double' },
@@ -20,7 +21,7 @@ const MATERIALS_SCHEMA: ObjectSchema = {
     { name: 'category', type: 'varchar', size: 40 },
   ],
   indexes: ['category'],
-  counts: { live: 0, tombstoned: 0 },
+  record_count: 0,
 };
 
 const LINE_ITEMS_SCHEMA: ObjectSchema = {
@@ -28,7 +29,8 @@ const LINE_ITEMS_SCHEMA: ObjectSchema = {
   object: 'line_items',
   splits: 8,
   max_key: 64,
-  value_size: 200,
+  max_value: 200,
+  slot_size: 232,
   fields: [
     { name: 'estimate_id', type: 'long' },
     { name: 'description', type: 'varchar', size: 80 },
@@ -38,7 +40,7 @@ const LINE_ITEMS_SCHEMA: ObjectSchema = {
     { name: 'total', type: 'double' },
   ],
   indexes: [],
-  counts: { live: 0, tombstoned: 0 },
+  record_count: 0,
 };
 
 async function ensureObject(client: ShardDbClient, schema: ObjectSchema) {

@@ -127,10 +127,11 @@ export interface ObjectSchema {
   object: string;
   splits: number;
   max_key: number;
-  value_size: number;
+  max_value: number;
+  slot_size: number;
   fields: FieldDescriptor[];
   indexes: string[];
-  counts: { live: number; tombstoned: number };
+  record_count: number;
 }
 
 export type SessionState = string;

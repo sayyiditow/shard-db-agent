@@ -8,7 +8,8 @@ const lineItemsSchema: ObjectSchema = {
   object: 'line_items',
   splits: 8,
   max_key: 64,
-  value_size: 200,
+  max_value: 200,
+  slot_size: 232,
   fields: [
     { name: 'description', type: 'varchar', size: 80 },
     { name: 'qty', type: 'double' },
@@ -17,7 +18,7 @@ const lineItemsSchema: ObjectSchema = {
     { name: 'old_note', type: 'varchar', size: 40, removed: true },
   ],
   indexes: [],
-  counts: { live: 0, tombstoned: 0 },
+  record_count: 0,
 };
 
 describe('validateWriteAgainstSchema', () => {
