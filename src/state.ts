@@ -1,0 +1,98 @@
+import type { ObjectSchema, TurnInput, WriteQuery } from './types';
+import { InvalidStateError } from './errors';
+import type { LlmMessage } from './llm-client';
+
+const STATE_VERSION = 1;
+
+export interface PendingWrite {
+  body: WriteQuery;
+  toolCallId: string;
+}
+
+export interface SessionData {
+  version: number;
+  schemas: Record<string, ObjectSchema>;
+  messages: LlmMessage[];
+  pendingWrites: Record<string, PendingWrite>;
+}
+
+function schemaKey(dir: string, object: string): string {
+  return `${dir}/${object}`;
+}
+
+export function createInitialSessionData(schema: ObjectSchema): SessionData {
+  return {
+    version: STATE_VERSION,
+    schemas: { [schemaKey(schema.dir, schema.object)]: schema },
+    messages: [],
+    pendingWrites: {},
+  };
+}
+
+export function cacheSchema(data: SessionData, schema: ObjectSchema): void {
+  data.schemas[schemaKey(schema.dir, schema.object)] = schema;
+}
+
+export function getSchema(data: SessionData, dir: string, object: string): ObjectSchema | undefined {
+  return data.schemas[schemaKey(dir, object)];
+}
+
+export function serializeState(data: SessionData): string {
+  return Buffer.from(JSON.stringify(data), 'utf-8').toString('base64');
+}
+
+export function deserializeState(state: string): SessionData {
+  let json: string;
+  try {
+    json = Buffer.from(state, 'base64').toString('utf-8');
+  } catch {
+    throw new InvalidStateError('shard-db-agent: state is not valid base64');
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new InvalidStateError('shard-db-agent: state does not decode to valid JSON');
+  }
+
+  const candidate = parsed as Partial<SessionData> | null;
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    candidate.version !== STATE_VERSION ||
+    typeof candidate.schemas !== 'object' ||
+    !Array.isArray(candidate.messages) ||
+    typeof candidate.pendingWrites !== 'object'
+  ) {
+    throw new InvalidStateError('shard-db-agent: state is missing required fields or has an unsupported version');
+  }
+
+  return candidate as SessionData;
+}
+
+export function applyTurnInputs(data: SessionData, turnInputs: TurnInput[]): void {
+  for (const input of turnInputs) {
+    if (input.kind === 'query_result') {
+      data.messages.push({
+        role: 'tool',
+        tool_call_id: input.id,
+        content: JSON.stringify(input.data),
+      });
+      continue;
+    }
+
+    const pending = data.pendingWrites[input.pendingId];
+    if (!pending) {
+      throw new InvalidStateError(
+        `shard-db-agent: write_outcome pendingId "${input.pendingId}" does not match any pending write from this session`,
+      );
+    }
+    delete data.pendingWrites[input.pendingId];
+    data.messages.push({
+      role: 'tool',
+      tool_call_id: pending.toolCallId,
+      content: JSON.stringify({ outcome: input.outcome, error: input.error ?? null }),
+    });
+  }
+}
