@@ -105,7 +105,7 @@ export class Agent {
           const call = readCalls[i];
           const query = readQueries[i];
           const result = await this.executor(query);
-          if (query.mode === 'describe-object') {
+          if (query.mode === 'describe-object' && result != null && !('error' in (result as object))) {
             cacheSchema(data, result as ObjectSchema);
           }
           data.messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
