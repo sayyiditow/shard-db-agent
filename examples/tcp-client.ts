@@ -16,6 +16,7 @@ export class ShardDbClient {
 
       socket.connect(this.port, this.host, () => {
         socket.write(JSON.stringify(request) + '\n');
+        socket.end();
       });
 
       socket.on('data', (chunk) => {
