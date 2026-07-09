@@ -54,4 +54,79 @@ describe('OpenAICompatLlmClient', () => {
     const client = new OpenAICompatLlmClient({ baseUrl: 'http://localhost:8080/v1', model: 'm', fetchImpl });
     await expect(client.complete({ messages: [], tools: [] })).rejects.toThrow(/no choices/);
   });
+
+  test('retries a 429 respecting the Retry-After header, then returns the result', async () => {
+    let callCount = 0;
+    const sleeps: number[] = [];
+    const fetchImpl = (async () => {
+      callCount++;
+      if (callCount === 1) {
+        return new Response(JSON.stringify({ error: 'rate limited' }), {
+          status: 429,
+          headers: { 'Retry-After': '2' },
+        });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const client = new OpenAICompatLlmClient({
+      baseUrl: 'http://localhost:8080/v1',
+      model: 'm',
+      fetchImpl,
+      sleepImpl: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    const result = await client.complete({ messages: [], tools: [] });
+
+    expect(result).toEqual({ role: 'assistant', content: 'ok' });
+    expect(callCount).toBe(2);
+    expect(sleeps).toEqual([2000]);
+  });
+
+  test('falls back to exponential backoff when the Retry-After header is absent', async () => {
+    let callCount = 0;
+    const sleeps: number[] = [];
+    const fetchImpl = (async () => {
+      callCount++;
+      if (callCount <= 2) {
+        return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429 });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const client = new OpenAICompatLlmClient({
+      baseUrl: 'http://localhost:8080/v1',
+      model: 'm',
+      fetchImpl,
+      sleepImpl: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    const result = await client.complete({ messages: [], tools: [] });
+
+    expect(result).toEqual({ role: 'assistant', content: 'ok' });
+    expect(sleeps).toEqual([1000, 2000]);
+  });
+
+  test('gives up after maxRetries consecutive 429s and throws', async () => {
+    let callCount = 0;
+    const fetchImpl = (async () => {
+      callCount++;
+      return new Response(JSON.stringify({ error: 'still limited' }), { status: 429 });
+    }) as unknown as typeof fetch;
+
+    const client = new OpenAICompatLlmClient({
+      baseUrl: 'http://localhost:8080/v1',
+      model: 'm',
+      fetchImpl,
+      maxRetries: 2,
+      sleepImpl: async () => {},
+    });
+
+    await expect(client.complete({ messages: [], tools: [] })).rejects.toThrow(/429/);
+    expect(callCount).toBe(3);
+  });
 });
