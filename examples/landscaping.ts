@@ -4,6 +4,7 @@ import * as readline from 'readline';
 
 const LLM_URL = process.env.LLM_URL ?? 'http://localhost:11434/v1';
 const LLM_MODEL = process.env.LLM_MODEL ?? 'qwen2.5:14b';
+const LLM_API_KEY = process.env.LLM_API_KEY;
 const SHARD_DB_HOST = process.env.SHARD_DB_HOST ?? 'localhost';
 const SHARD_DB_PORT = parseInt(process.env.SHARD_DB_PORT ?? '9199', 10);
 
@@ -93,6 +94,7 @@ async function main() {
   console.log('shard-db-agent — landscaping example');
   console.log('─'.repeat(50));
   console.log(`LLM:    ${LLM_MODEL} @ ${LLM_URL}`);
+  console.log(`Auth:   ${LLM_API_KEY ? 'API key provided' : 'no API key (local LLM)'}`);
   console.log(`DB:     ${SHARD_DB_HOST}:${SHARD_DB_PORT}`);
   console.log('─'.repeat(50));
   console.log();
@@ -121,6 +123,7 @@ async function main() {
   const agent = new Agent({
     baseUrl: LLM_URL,
     model: LLM_MODEL,
+    apiKey: LLM_API_KEY,
     executor: buildExecutor(client),
   });
 

@@ -47,15 +47,32 @@ bun run examples/landscaping.ts
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_URL` | `http://localhost:11434/v1` | Ollama OpenAI-compatible endpoint |
+| `LLM_URL` | `http://localhost:11434/v1` | LLM endpoint (OpenAI-compatible) |
 | `LLM_MODEL` | `qwen2.5:14b` | Model to use |
+| `LLM_API_KEY` | _(none)_ | API key for remote LLM endpoints |
 | `SHARD_DB_HOST` | `localhost` | shard-db TCP host |
 | `SHARD_DB_PORT` | `9199` | shard-db TCP port |
 
-Example with overrides:
+### Remote LLM (OpenCode Zen)
+
+Use OpenCode's hosted endpoint for faster responses without running a local LLM:
 
 ```bash
-LLM_MODEL=qwen2.5:7b SHARD_DB_PORT=9200 bun run example
+LLM_URL=https://opencode.ai/zen/v1 LLM_MODEL=mimo-v2.5-free LLM_API_KEY=your-key bun run example
+```
+
+Available free models: `mimo-v2.5-free`, `deepseek-v4-flash-free`, `nemotron-3-ultra-free`, `north-mini-code-free`.
+
+### MiMo (Xiaomi)
+
+```bash
+LLM_URL=https://api.xiaomimimo.com/v1 LLM_MODEL=mimo-v2.5 LLM_API_KEY=your-mimo-key bun run example
+```
+
+### Local Ollama
+
+```bash
+LLM_MODEL=qwen2.5:14b bun run example
 ```
 
 ## What the example does

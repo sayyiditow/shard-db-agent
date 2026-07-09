@@ -13,17 +13,12 @@ export class ShardDbClient {
     return new Promise((resolve, reject) => {
       const socket = new net.Socket();
       let data = '';
+      let resolved = false;
 
-      socket.connect(this.port, this.host, () => {
-        socket.write(JSON.stringify(request) + '\n');
-        socket.end();
-      });
-
-      socket.on('data', (chunk) => {
-        data += chunk.toString();
-      });
-
-      socket.on('end', () => {
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        socket.destroy();
         const text = data.replace(/\0/g, '').trim();
         if (!text) {
           resolve(null);
@@ -34,15 +29,29 @@ export class ShardDbClient {
         } catch {
           resolve(text);
         }
+      };
+
+      socket.connect(this.port, this.host, () => {
+        const payload = JSON.stringify(request) + '\n';
+        socket.write(payload);
+      });
+
+      socket.on('data', (chunk) => {
+        data += chunk.toString();
+        if (data.includes('\0\n')) {
+          finish();
+        }
       });
 
       socket.on('error', (err) => {
-        reject(new Error(`shard-db TCP error: ${err.message}`));
+        if (!resolved) reject(new Error(`shard-db TCP error: ${err.message}`));
       });
 
       socket.setTimeout(10_000, () => {
-        socket.destroy();
-        reject(new Error('shard-db TCP timeout (10s)'));
+        if (!resolved) {
+          socket.destroy();
+          reject(new Error('shard-db TCP timeout (10s)'));
+        }
       });
     });
   }
