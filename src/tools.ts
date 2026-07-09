@@ -1,5 +1,13 @@
 import type { LlmToolDef, LlmToolCall } from './llm-client';
-import type { AggregateQuery, CountQuery, DescribeObjectQuery, FindQuery, ReadQuery, WriteQuery } from './types';
+import type {
+  AggregateQuery,
+  CountQuery,
+  DescribeObjectQuery,
+  FindQuery,
+  ListObjectsQuery,
+  ReadQuery,
+  WriteQuery,
+} from './types';
 
 export const FIND_RECORDS_TOOL: LlmToolDef = {
   type: 'function',
@@ -99,6 +107,22 @@ export const DESCRIBE_OBJECT_TOOL: LlmToolDef = {
   },
 };
 
+export const LIST_OBJECTS_TOOL: LlmToolDef = {
+  type: 'function',
+  function: {
+    name: 'list_objects',
+    description:
+      "List every object name that exists inside a tenant directory. Only call this when you can't find the object the user means — e.g. describe_object came back with an error, or the name they gave doesn't match anything in the known schemas below — so you can match the closest real name before asking the user to clarify. Don't call it otherwise.",
+    parameters: {
+      type: 'object',
+      properties: {
+        dir: { type: 'string' },
+      },
+      required: ['dir'],
+    },
+  },
+};
+
 export const PROPOSE_WRITE_TOOL: LlmToolDef = {
   type: 'function',
   function: {
@@ -140,6 +164,7 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
   COUNT_RECORDS_TOOL,
   AGGREGATE_RECORDS_TOOL,
   DESCRIBE_OBJECT_TOOL,
+  LIST_OBJECTS_TOOL,
 ];
 
 export const ALL_TOOL_DEFS: LlmToolDef[] = [...READ_TOOL_DEFS, PROPOSE_WRITE_TOOL];
@@ -165,6 +190,8 @@ export function toolCallToReadQuery(call: LlmToolCall): ReadQuery {
       return { mode: 'aggregate', ...(args as object) } as AggregateQuery;
     case 'describe_object':
       return { mode: 'describe-object', ...(args as object) } as DescribeObjectQuery;
+    case 'list_objects':
+      return { mode: 'list-objects', ...(args as object) } as ListObjectsQuery;
     default:
       throw new Error(`shard-db-agent: "${call.function.name}" is not a read tool`);
   }

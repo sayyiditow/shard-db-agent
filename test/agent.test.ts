@@ -41,6 +41,10 @@ function findToolCall(id: string, args: unknown): LlmToolCall {
   return { id, type: 'function', function: { name: 'find_records', arguments: JSON.stringify(args) } };
 }
 
+function listObjectsToolCall(id: string, args: unknown): LlmToolCall {
+  return { id, type: 'function', function: { name: 'list_objects', arguments: JSON.stringify(args) } };
+}
+
 function writeToolCall(id: string, args: unknown): LlmToolCall {
   return { id, type: 'function', function: { name: 'propose_write', arguments: JSON.stringify(args) } };
 }
@@ -93,6 +97,28 @@ describe('Agent.turn', () => {
           object: 'materials',
           criteria: [{ field: 'category', op: 'eq', value: 'retaining_wall_block' }],
         },
+      });
+    }
+  });
+
+  test('a list_objects tool call with no executor returns kind: query_request', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [listObjectsToolCall('call_1', { dir: 'landscaping' })],
+      },
+    ]);
+    const agent = new Agent({ llmClient: llm });
+
+    const result = await agent.turn(null, "I can't find the widgets object", materialsSchema);
+
+    expect(result.kind).toBe('query_request');
+    if (result.kind === 'query_request') {
+      expect(result.queries).toHaveLength(1);
+      expect(result.queries[0]).toEqual({
+        id: 'call_1',
+        query: { mode: 'list-objects', dir: 'landscaping' },
       });
     }
   });
@@ -259,6 +285,31 @@ describe('Agent.turn', () => {
     const systemMessage = secondCallMessages.find((m) => m.role === 'system');
     expect(systemMessage?.content).toContain('landscaping/line_items');
     expect(systemMessage?.content).toContain('description: varchar(80)');
+  });
+
+  test('with an executor, a list_objects tool call round-trips the object-name array back to the model', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [listObjectsToolCall('call_l1', { dir: 'landscaping' })],
+      },
+      { role: 'assistant', content: 'landscaping has materials and line_items.' },
+    ]);
+    const agent = new Agent({
+      llmClient: llm,
+      executor: async (query) => {
+        if (query.mode === 'list-objects') return ['line_items', 'materials'];
+        throw new Error(`unexpected query mode: ${query.mode}`);
+      },
+    });
+
+    const result = await agent.turn(null, "I can't find the widgets object, what do we actually have?", materialsSchema);
+
+    expect(result.kind).toBe('answer');
+    const secondCallMessages = llm.callAt(1).messages;
+    const toolMessage = secondCallMessages.find((m) => m.tool_call_id === 'call_l1');
+    expect(toolMessage?.content).toBe(JSON.stringify(['line_items', 'materials']));
   });
 
   test('executor failure propagates unchanged out of turn()', async () => {

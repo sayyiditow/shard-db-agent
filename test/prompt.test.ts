@@ -51,4 +51,10 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('outcome "rejected"');
     expect(prompt).toContain('write was cancelled');
   });
+
+  test('instructs the model to use list_objects only as a fallback when it cannot find the object', () => {
+    const prompt = buildSystemPrompt({});
+    expect(prompt).toContain('list_objects');
+    expect(prompt).toContain("don't call list_objects otherwise");
+  });
 });

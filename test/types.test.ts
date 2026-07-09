@@ -2,13 +2,14 @@ import { describe, test, expect } from 'bun:test';
 import { isReadQuery, isWriteQuery, type QueryBody } from '../src/types';
 
 describe('isReadQuery / isWriteQuery', () => {
-  test('find/count/aggregate/describe-object are read queries', () => {
+  test('find/count/aggregate/describe-object/list-objects are read queries', () => {
     const find: QueryBody = { mode: 'find', dir: 'd', object: 'o', criteria: [] };
     const count: QueryBody = { mode: 'count', dir: 'd', object: 'o', criteria: [] };
     const agg: QueryBody = { mode: 'aggregate', dir: 'd', object: 'o', aggregates: [{ fn: 'count', alias: 'n' }] };
     const desc: QueryBody = { mode: 'describe-object', dir: 'd', object: 'o' };
+    const list: QueryBody = { mode: 'list-objects', dir: 'd' };
 
-    for (const q of [find, count, agg, desc]) {
+    for (const q of [find, count, agg, desc, list]) {
       expect(isReadQuery(q)).toBe(true);
       expect(isWriteQuery(q)).toBe(false);
     }

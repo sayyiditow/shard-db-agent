@@ -14,10 +14,14 @@ function toolCall(name: string, args: unknown): LlmToolCall {
 }
 
 describe('tool definitions', () => {
-  test('ALL_TOOL_DEFS has exactly 5 tools with unique names', () => {
-    expect(ALL_TOOL_DEFS).toHaveLength(5);
+  test('ALL_TOOL_DEFS has exactly 6 tools with unique names', () => {
+    expect(ALL_TOOL_DEFS).toHaveLength(6);
     const names = new Set(ALL_TOOL_DEFS.map((t) => t.function.name));
-    expect(names.size).toBe(5);
+    expect(names.size).toBe(6);
+  });
+
+  test('READ_TOOL_DEFS includes list_objects', () => {
+    expect(READ_TOOL_DEFS.some((t) => t.function.name === 'list_objects')).toBe(true);
   });
 
   test('READ_TOOL_DEFS excludes propose_write', () => {
@@ -50,6 +54,11 @@ describe('tool definitions', () => {
   test('toolCallToReadQuery maps describe_object to a DescribeObjectQuery', () => {
     const call = toolCall('describe_object', { dir: 'landscaping', object: 'materials' });
     expect(toolCallToReadQuery(call)).toEqual({ mode: 'describe-object', dir: 'landscaping', object: 'materials' });
+  });
+
+  test('toolCallToReadQuery maps list_objects to a ListObjectsQuery', () => {
+    const call = toolCall('list_objects', { dir: 'landscaping' });
+    expect(toolCallToReadQuery(call)).toEqual({ mode: 'list-objects', dir: 'landscaping' });
   });
 
   test('toolCallToReadQuery throws for propose_write', () => {

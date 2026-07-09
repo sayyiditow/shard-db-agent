@@ -73,7 +73,12 @@ export interface DescribeObjectQuery {
   object: string;
 }
 
-export type ReadQuery = FindQuery | CountQuery | AggregateQuery | DescribeObjectQuery;
+export interface ListObjectsQuery {
+  mode: 'list-objects';
+  dir: string;
+}
+
+export type ReadQuery = FindQuery | CountQuery | AggregateQuery | DescribeObjectQuery | ListObjectsQuery;
 
 export interface InsertQuery {
   mode: 'insert';
@@ -106,7 +111,13 @@ export type WriteQuery = InsertQuery | UpdateQuery | DeleteQuery;
 export type QueryBody = ReadQuery | WriteQuery;
 
 export function isReadQuery(q: QueryBody): q is ReadQuery {
-  return q.mode === 'find' || q.mode === 'count' || q.mode === 'aggregate' || q.mode === 'describe-object';
+  return (
+    q.mode === 'find' ||
+    q.mode === 'count' ||
+    q.mode === 'aggregate' ||
+    q.mode === 'describe-object' ||
+    q.mode === 'list-objects'
+  );
 }
 
 export function isWriteQuery(q: QueryBody): q is WriteQuery {

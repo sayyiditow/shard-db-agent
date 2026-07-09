@@ -9,6 +9,7 @@ export type {
   AggregateQuery,
   AggregateSpec,
   DescribeObjectQuery,
+  ListObjectsQuery,
   ReadQuery,
   InsertQuery,
   UpdateQuery,
