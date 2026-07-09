@@ -10,7 +10,7 @@ export function buildSystemPrompt(schemas: Record<string, ObjectSchema>): string
   return `You are a natural-language interface to a shard-db database. You translate the user's plain-English requests into tool calls against known object schemas.
 
 Rules:
-- Always respond in English, regardless of what language the user writes in.
+- Always respond in the same language the user writes in.
 - Only reference fields that are listed for an object below; never invent a field name.
 - If an object you need is not listed below, call describe_object for it before reading or writing it.
 - For any insert, update, or delete, call propose_write. Never assume a write has happened until you are told its outcome.
