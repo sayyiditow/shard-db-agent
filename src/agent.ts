@@ -65,16 +65,20 @@ export class Agent {
       data.messages.push({ role: 'user', content: text });
     }
 
+    let llmMs = 0;
+
     for (let iteration = 0; iteration < this.maxToolIterations; iteration++) {
       const systemPrompt = buildSystemPrompt(data.schemas);
       const messages: LlmMessage[] = [{ role: 'system', content: systemPrompt }, ...data.messages];
 
+      const llmStart = performance.now();
       const assistantMessage = await this.llmClient.complete({ messages, tools: ALL_TOOL_DEFS });
+      llmMs += performance.now() - llmStart;
       data.messages.push(assistantMessage);
 
       const toolCalls = assistantMessage.tool_calls ?? [];
       if (toolCalls.length === 0) {
-        return { kind: 'answer', text: assistantMessage.content ?? '', state: serializeState(data) };
+        return { kind: 'answer', text: assistantMessage.content ?? '', state: serializeState(data), llmMs: Math.round(llmMs) };
       }
 
       const writeCall = toolCalls.find(isProposeWriteToolCall);
@@ -94,7 +98,14 @@ export class Agent {
 
         data.pendingWrites[pendingId] = { body: finalBody, toolCallId: writeCall.id };
 
-        return { kind: 'proposed_write', body: finalBody, summary, pendingId, state: serializeState(data) };
+        return {
+          kind: 'proposed_write',
+          body: finalBody,
+          summary,
+          pendingId,
+          state: serializeState(data),
+          llmMs: Math.round(llmMs),
+        };
       }
 
       const readCalls = toolCalls.filter(isReadToolCall);
@@ -114,7 +125,7 @@ export class Agent {
       }
 
       const queries: QueryRequestItem[] = readCalls.map((call, i) => ({ id: call.id, query: readQueries[i] }));
-      return { kind: 'query_request', queries, state: serializeState(data) };
+      return { kind: 'query_request', queries, state: serializeState(data), llmMs: Math.round(llmMs) };
     }
 
     throw new Error(

@@ -153,9 +153,16 @@ export interface QueryRequestItem {
 }
 
 export type AgentTurnResult =
-  | { kind: 'query_request'; queries: QueryRequestItem[]; state: SessionState }
-  | { kind: 'answer'; text: string; state: SessionState }
-  | { kind: 'proposed_write'; body: WriteQuery; summary: string; pendingId: string; state: SessionState };
+  | { kind: 'query_request'; queries: QueryRequestItem[]; state: SessionState; llmMs: number }
+  | { kind: 'answer'; text: string; state: SessionState; llmMs: number }
+  | {
+      kind: 'proposed_write';
+      body: WriteQuery;
+      summary: string;
+      pendingId: string;
+      state: SessionState;
+      llmMs: number;
+    };
 
 export type TurnInput =
   | { kind: 'query_result'; id: string; data: unknown }
