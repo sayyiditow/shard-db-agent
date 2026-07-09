@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { Agent } from '../src/agent';
 import { FakeLlmClient } from './fixtures/fake-llm-client';
-import { InvalidStateError, WriteValidationError } from '../src/errors';
+import { InvalidStateError } from '../src/errors';
 import type { ObjectSchema } from '../src/types';
 import type { LlmMessage, LlmToolCall } from '../src/llm-client';
 
@@ -190,7 +190,7 @@ describe('Agent.turn', () => {
     expect(typeof result.pendingId).toBe('string');
   });
 
-  test('propose_write for an object with no known schema throws WriteValidationError', async () => {
+  test('propose_write for an unknown object retries; model recovers on next attempt', async () => {
     const llm = new FakeLlmClient([
       {
         role: 'assistant',
@@ -202,13 +202,28 @@ describe('Agent.turn', () => {
           }),
         ],
       },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          writeToolCall('call_w2', {
+            summary: 'Add a line item',
+            body: { mode: 'insert', dir: 'landscaping', object: 'line_items', value: { description: 'x', qty: 1, unit_price: 1, total: 1 } },
+          }),
+        ],
+      },
     ]);
     const agent = new Agent({ llmClient: llm });
+    const result = await agent.turn(null, 'add it', lineItemsSchema);
 
-    await expect(agent.turn(null, 'add it', lineItemsSchema)).rejects.toThrow(WriteValidationError);
+    expect(result.kind).toBe('proposed_write');
+    if (result.kind !== 'proposed_write') throw new Error('expected proposed_write');
+    expect(result.body.dir).toBe('landscaping');
+    expect(result.body.object).toBe('line_items');
+    expect(llm.callCount).toBe(2);
   });
 
-  test('propose_write with an invalid field is rejected before reaching the host', async () => {
+  test('propose_write with an invalid field retries; model recovers on next attempt', async () => {
     const llm = new FakeLlmClient([
       {
         role: 'assistant',
@@ -220,10 +235,45 @@ describe('Agent.turn', () => {
           }),
         ],
       },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          writeToolCall('call_w2', {
+            summary: 'Add a thing',
+            body: { mode: 'insert', dir: 'landscaping', object: 'line_items', value: { description: 'x', qty: 1, unit_price: 1, total: 1 } },
+          }),
+        ],
+      },
     ]);
     const agent = new Agent({ llmClient: llm });
+    const result = await agent.turn(null, 'add it', lineItemsSchema);
 
-    await expect(agent.turn(null, 'add it', lineItemsSchema)).rejects.toThrow(WriteValidationError);
+    expect(result.kind).toBe('proposed_write');
+    if (result.kind !== 'proposed_write') throw new Error('expected proposed_write');
+    expect(result.body.dir).toBe('landscaping');
+    expect(result.body.object).toBe('line_items');
+    expect(llm.callCount).toBe(2);
+  });
+
+  test('propose_write that never becomes valid exhausts iterations and throws', async () => {
+    const bad: LlmMessage[] = Array.from({ length: 5 }, (_, i) => ({
+      role: 'assistant' as const,
+      content: null,
+      tool_calls: [writeToolCall(`call_${i}`, {
+        summary: 'bad',
+        body: { mode: 'insert', dir: 'landscaping', object: 'never_described', value: {} },
+      })],
+    }));
+    const llm = new FakeLlmClient(bad);
+    const agent = new Agent({
+      llmClient: llm,
+      maxToolIterations: 5,
+    });
+
+    await expect(agent.turn(null, 'add it', lineItemsSchema)).rejects.toThrow(
+      /exceeded max tool-use iterations/,
+    );
   });
 
   test('with an executor, read tool calls auto-run within a single turn() call', async () => {

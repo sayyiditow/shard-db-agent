@@ -86,12 +86,28 @@ export class Agent {
         const { summary, body } = parseProposeWriteArgs(writeCall);
         const objSchema = getSchema(data, body.dir, body.object);
         if (!objSchema) {
-          throw new WriteValidationError(
-            `shard-db-agent: propose_write targeted ${body.dir}/${body.object}, which has not been described in this session`,
-            [`unknown object: ${body.dir}/${body.object}`],
-          );
+          data.messages.push({
+            role: 'tool',
+            tool_call_id: writeCall.id,
+            content: JSON.stringify({
+              error: `unknown object: ${body.dir}/${body.object} — pick a known object`,
+            }),
+          });
+          continue;
         }
-        validateWriteAgainstSchema(objSchema, body);
+        try {
+          validateWriteAgainstSchema(objSchema, body);
+        } catch (err) {
+          if (err instanceof WriteValidationError) {
+            data.messages.push({
+              role: 'tool',
+              tool_call_id: writeCall.id,
+              content: JSON.stringify({ error: 'invalid write', issues: err.issues }),
+            });
+            continue;
+          }
+          throw err;
+        }
 
         const pendingId = crypto.randomUUID();
         const finalBody: WriteQuery = body.mode === 'insert' && !body.key ? { ...body, key: mintKey(pendingId) } : body;
