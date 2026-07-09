@@ -162,6 +162,8 @@ async function main() {
       // Update state
       state = turn.state;
 
+      console.log(`(thought for ${turn.llmMs}ms)`);
+
       // Log the result kind for debugging
       if (turn.kind === 'query_request') {
         console.log(`[query_request: ${turn.queries.length} query/ies]`);
@@ -202,6 +204,7 @@ async function main() {
 
         state = followUp.state;
 
+        console.log(`(thought for ${followUp.llmMs}ms)`);
         console.log();
         if (followUp.kind === 'answer') {
           console.log(`Agent: ${followUp.text}`);
