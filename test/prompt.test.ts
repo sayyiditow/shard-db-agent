@@ -39,4 +39,16 @@ describe('buildSystemPrompt', () => {
   test('always includes the confirm-before-write rule', () => {
     expect(buildSystemPrompt({})).toContain('propose_write');
   });
+
+  test('instructs the model to state a committed write as settled fact, not hedge', () => {
+    const prompt = buildSystemPrompt({});
+    expect(prompt).toContain('outcome "committed"');
+    expect(prompt).toContain('never hedge');
+  });
+
+  test('instructs the model on how to respond to a rejected write', () => {
+    const prompt = buildSystemPrompt({});
+    expect(prompt).toContain('outcome "rejected"');
+    expect(prompt).toContain('write was cancelled');
+  });
 });

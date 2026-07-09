@@ -84,16 +84,40 @@ describe('state', () => {
 
   test('applyTurnInputs resolves write_outcome against pendingWrites and removes the entry', () => {
     const data = createInitialSessionData(materialsSchema);
+    const writeBody = { mode: 'insert' as const, dir: 'landscaping', object: 'line_items', value: {} };
     data.pendingWrites['p1'] = {
       toolCallId: 'call_write_1',
-      body: { mode: 'insert', dir: 'landscaping', object: 'line_items', value: {} },
+      body: writeBody,
     };
 
     applyTurnInputs(data, [{ kind: 'write_outcome', pendingId: 'p1', outcome: 'committed' }]);
 
     expect(data.pendingWrites['p1']).toBeUndefined();
     expect(data.messages).toEqual([
-      { role: 'tool', tool_call_id: 'call_write_1', content: JSON.stringify({ outcome: 'committed', error: null }) },
+      {
+        role: 'tool',
+        tool_call_id: 'call_write_1',
+        content: JSON.stringify({ outcome: 'committed', error: null, write: writeBody }),
+      },
+    ]);
+  });
+
+  test('applyTurnInputs echoes the write body on a rejected outcome too', () => {
+    const data = createInitialSessionData(materialsSchema);
+    const writeBody = { mode: 'delete' as const, dir: 'landscaping', object: 'line_items', key: 'li_1' };
+    data.pendingWrites['p2'] = {
+      toolCallId: 'call_write_2',
+      body: writeBody,
+    };
+
+    applyTurnInputs(data, [{ kind: 'write_outcome', pendingId: 'p2', outcome: 'rejected' }]);
+
+    expect(data.messages).toEqual([
+      {
+        role: 'tool',
+        tool_call_id: 'call_write_2',
+        content: JSON.stringify({ outcome: 'rejected', error: null, write: writeBody }),
+      },
     ]);
   });
 

@@ -92,7 +92,7 @@ export function applyTurnInputs(data: SessionData, turnInputs: TurnInput[]): voi
     data.messages.push({
       role: 'tool',
       tool_call_id: pending.toolCallId,
-      content: JSON.stringify({ outcome: input.outcome, error: input.error ?? null }),
+      content: JSON.stringify({ outcome: input.outcome, error: input.error ?? null, write: pending.body }),
     });
   }
 }

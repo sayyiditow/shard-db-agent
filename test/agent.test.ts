@@ -339,7 +339,7 @@ describe('Agent.turn', () => {
     expect(followUp.kind).toBe('answer');
     const secondCallMessages = llm.callAt(1).messages;
     const toolMessage = secondCallMessages.find((m) => m.tool_call_id === 'call_w1');
-    expect(toolMessage?.content).toBe(JSON.stringify({ outcome: 'committed', error: null }));
+    expect(toolMessage?.content).toBe(JSON.stringify({ outcome: 'committed', error: null, write: proposed.body }));
   });
 
   test('an unknown write_outcome pendingId throws InvalidStateError', async () => {
