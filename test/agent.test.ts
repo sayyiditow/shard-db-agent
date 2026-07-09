@@ -424,4 +424,71 @@ describe('Agent.turn', () => {
       /exceeded max tool-use iterations/,
     );
   });
+
+  test('llmMs measures only LLM completion time, not executor time', async () => {
+    const llm = new FakeLlmClient(
+      [
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [findToolCall('call_1', { dir: 'landscaping', object: 'materials', criteria: [] })],
+        },
+        { role: 'assistant', content: 'Versa-Lok is $6.85/sqft.' },
+      ],
+      { delayMs: 30 },
+    );
+    const agent = new Agent({
+      llmClient: llm,
+      executor: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return [{ name: 'Versa-Lok', unit_price: 6.85 }];
+      },
+    });
+
+    const result = await agent.turn(null, 'What does Versa-Lok cost?', materialsSchema);
+
+    expect(result.kind).toBe('answer');
+    // Two LLM calls each delayed ~30ms -> at least ~55ms of llmMs.
+    expect(result.llmMs).toBeGreaterThanOrEqual(55);
+    // The 150ms executor delay must not be counted -- well under 30+30+150.
+    expect(result.llmMs).toBeLessThan(140);
+  });
+
+  test('llmMs is a non-negative number on query_request and proposed_write results too', async () => {
+    const llmForQuery = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [findToolCall('call_1', { dir: 'landscaping', object: 'materials', criteria: [] })],
+      },
+    ]);
+    const queryAgent = new Agent({ llmClient: llmForQuery });
+    const queryResult = await queryAgent.turn(null, 'find stuff', materialsSchema);
+    expect(queryResult.kind).toBe('query_request');
+    expect(typeof queryResult.llmMs).toBe('number');
+    expect(queryResult.llmMs).toBeGreaterThanOrEqual(0);
+
+    const llmForWrite = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          writeToolCall('call_w1', {
+            summary: 'Add a thing',
+            body: {
+              mode: 'insert',
+              dir: 'landscaping',
+              object: 'line_items',
+              value: { description: 'x', qty: 1, unit_price: 1, total: 1 },
+            },
+          }),
+        ],
+      },
+    ]);
+    const writeAgent = new Agent({ llmClient: llmForWrite });
+    const writeResult = await writeAgent.turn(null, 'add it', lineItemsSchema);
+    expect(writeResult.kind).toBe('proposed_write');
+    expect(typeof writeResult.llmMs).toBe('number');
+    expect(writeResult.llmMs).toBeGreaterThanOrEqual(0);
+  });
 });
