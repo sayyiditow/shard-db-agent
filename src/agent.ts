@@ -73,10 +73,16 @@ export class Agent {
 
       const llmStart = performance.now();
       const assistantMessage = await this.llmClient.complete({ messages, tools: ALL_TOOL_DEFS });
-      llmMs += performance.now() - llmStart;
+      const callMs = performance.now() - llmStart;
+      llmMs += callMs;
       data.messages.push(assistantMessage);
 
       const toolCalls = assistantMessage.tool_calls ?? [];
+      if (process.env.AGENT_TRACE) {
+        const names = toolCalls.length > 0 ? toolCalls.map((c) => c.function.name).join(',') : '(none — final answer)';
+        const known = Object.keys(data.schemas).join(',') || '(none)';
+        console.error(`[trace] iter=${iteration} callMs=${Math.round(callMs)} tools=[${names}] cachedSchemas=[${known}]`);
+      }
       if (toolCalls.length === 0) {
         return { kind: 'answer', text: assistantMessage.content ?? '', state: serializeState(data), llmMs: Math.round(llmMs) };
       }
