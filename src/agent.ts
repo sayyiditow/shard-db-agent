@@ -70,7 +70,7 @@ export class Agent {
   async turn(
     state: SessionState | null,
     text: string | null,
-    schema?: ObjectSchema,
+    schema?: ObjectSchema | ObjectSchema[],
     turnInputs?: TurnInput[],
   ): Promise<AgentTurnResult> {
     const data = this.loadSessionData(state, schema);
@@ -233,17 +233,19 @@ export class Agent {
     );
   }
 
-  private loadSessionData(state: SessionState | null, schema?: ObjectSchema): SessionData {
+  private loadSessionData(state: SessionState | null, schema?: ObjectSchema | ObjectSchema[]): SessionData {
+    const schemas = schema === undefined ? [] : Array.isArray(schema) ? schema : [schema];
+
     if (state === null) {
-      if (!schema) {
+      if (schemas.length === 0) {
         throw new Error('shard-db-agent: schema is required on the first turn of a new session (state is null)');
       }
-      return createInitialSessionData(schema);
+      const data = createInitialSessionData(schemas[0]);
+      for (const s of schemas.slice(1)) cacheSchema(data, s);
+      return data;
     }
     const data = deserializeState(state);
-    if (schema) {
-      cacheSchema(data, schema);
-    }
+    for (const s of schemas) cacheSchema(data, s);
     return data;
   }
 }

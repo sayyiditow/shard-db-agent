@@ -56,6 +56,32 @@ describe('Agent.turn', () => {
     await expect(agent.turn(null, 'hello')).rejects.toThrow(/schema is required/);
   });
 
+  test('turn() accepts an array of schemas on the bootstrap call and caches all of them', async () => {
+    const llm = new FakeLlmClient([{ role: 'assistant', content: 'ok' }]);
+    const agent = new Agent({ llmClient: llm });
+
+    const result = await agent.turn(null, 'hi', [materialsSchema, lineItemsSchema]);
+
+    const data = deserializeState((result as { state: string }).state);
+    expect(getSchema(data, 'landscaping', 'materials')).toEqual(materialsSchema);
+    expect(getSchema(data, 'landscaping', 'line_items')).toEqual(lineItemsSchema);
+  });
+
+  test('turn() accepts an array of schemas on a later call and merges them into existing state', async () => {
+    const llm = new FakeLlmClient([
+      { role: 'assistant', content: 'ok' },
+      { role: 'assistant', content: 'ok2' },
+    ]);
+    const agent = new Agent({ llmClient: llm });
+
+    const turn1 = await agent.turn(null, 'hi', materialsSchema);
+    const turn2 = await agent.turn((turn1 as { state: string }).state, 'more', [lineItemsSchema]);
+
+    const data = deserializeState((turn2 as { state: string }).state);
+    expect(getSchema(data, 'landscaping', 'materials')).toEqual(materialsSchema);
+    expect(getSchema(data, 'landscaping', 'line_items')).toEqual(lineItemsSchema);
+  });
+
   test('a plain assistant reply with no tool calls returns kind: answer', async () => {
     const llm = new FakeLlmClient([{ role: 'assistant', content: 'The wall needs a permit above 4 feet.' }]);
     const agent = new Agent({ llmClient: llm });
