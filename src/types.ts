@@ -1,6 +1,6 @@
 export type CriterionOp =
-  | 'eq' | 'equal' | 'neq' | 'not_equal'
-  | 'lt' | 'less' | 'gt' | 'greater' | 'lte' | 'less_eq' | 'gte' | 'greater_eq'
+  | 'eq' | 'equal' | '=' | 'neq' | 'not_equal' | '!=' | '<>'
+  | 'lt' | 'less' | '<' | 'gt' | 'greater' | '>' | 'lte' | 'less_eq' | '<=' | 'gte' | 'greater_eq' | '>='
   | 'between'
   | 'in' | 'nin' | 'not_in'
   | 'exists' | 'nexists' | 'not_exists'
@@ -15,8 +15,8 @@ export type CriterionOp =
 export interface Criterion {
   field: string;
   op: CriterionOp;
-  value: string;
-  value2?: string;
+  value: string | number | boolean;
+  value2?: string | number | boolean;
 }
 
 export interface CriteriaOr {

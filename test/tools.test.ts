@@ -50,6 +50,19 @@ describe('tool definitions', () => {
     expect(props.op.enum).toEqual(expect.arrayContaining(['eq', 'lt', 'gt', 'between', 'in', 'like', 'contains', 'starts_with']));
   });
 
+  test('find_records criteria op enum includes symbol operators alongside word forms', () => {
+    const schema = criteriaItemSchema(FIND_RECORDS_TOOL);
+    const props = schema.properties as Record<string, { enum?: string[] }>;
+    expect(props.op.enum).toEqual(expect.arrayContaining(['>', '<', '>=', '<=', '=', '!=']));
+  });
+
+  test('find_records criteria value and value2 accept string, number, or boolean per JSON Schema', () => {
+    const schema = criteriaItemSchema(FIND_RECORDS_TOOL);
+    const props = schema.properties as Record<string, { type?: string[] }>;
+    expect(props.value.type).toEqual(['string', 'number', 'boolean']);
+    expect(props.value2.type).toEqual(['string', 'number', 'boolean']);
+  });
+
   test('count_records and aggregate_records criteria share the same concrete shape', () => {
     for (const schema of [criteriaItemSchema(COUNT_RECORDS_TOOL), criteriaItemSchema(AGGREGATE_RECORDS_TOOL)]) {
       expect(schema).not.toEqual({});
@@ -91,6 +104,20 @@ describe('tool definitions', () => {
       dir: 'landscaping',
       object: 'materials',
       criteria: [{ field: 'category', op: 'eq', value: 'retaining_wall_block' }],
+    });
+  });
+
+  test('toolCallToReadQuery accepts a symbol operator with a numeric value', () => {
+    const call = toolCall('find_records', {
+      dir: 'landscaping',
+      object: 'materials',
+      criteria: [{ field: 'unit_price', op: '>', value: 5 }],
+    });
+    expect(toolCallToReadQuery(call)).toEqual({
+      mode: 'find',
+      dir: 'landscaping',
+      object: 'materials',
+      criteria: [{ field: 'unit_price', op: '>', value: 5 }],
     });
   });
 

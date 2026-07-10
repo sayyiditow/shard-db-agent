@@ -11,8 +11,8 @@ import type {
 } from './types';
 
 const CRITERION_OPS: CriterionOp[] = [
-  'eq', 'equal', 'neq', 'not_equal',
-  'lt', 'less', 'gt', 'greater', 'lte', 'less_eq', 'gte', 'greater_eq',
+  'eq', 'equal', '=', 'neq', 'not_equal', '!=', '<>',
+  'lt', 'less', '<', 'gt', 'greater', '>', 'lte', 'less_eq', '<=', 'gte', 'greater_eq', '>=',
   'between',
   'in', 'nin', 'not_in',
   'exists', 'nexists', 'not_exists',
@@ -37,8 +37,8 @@ const CRITERION_NODE_SCHEMA: Record<string, unknown> = {
   properties: {
     field: { type: 'string', description: 'Field name to filter on.' },
     op: { type: 'string', enum: CRITERION_OPS, description: 'Comparison operator.' },
-    value: { type: 'string', description: 'Comparison value (as a string; the server coerces to the field type).' },
-    value2: { type: 'string', description: 'Second value, required only for range ops like between/len_between.' },
+    value: { type: ['string', 'number', 'boolean'], description: 'Comparison value; the server coerces to the field type.' },
+    value2: { type: ['string', 'number', 'boolean'], description: 'Second value, required only for range ops like between/len_between.' },
     or: { type: 'array', items: {}, description: 'OR-combined child criteria nodes.' },
     and: { type: 'array', items: {}, description: 'AND-combined child criteria nodes.' },
   },
