@@ -29,7 +29,7 @@ const lineItemsSchema: ObjectSchema = { ...materialsSchema, object: 'line_items'
 describe('state', () => {
   test('createInitialSessionData seeds schemas with the bootstrap schema', () => {
     const data = createInitialSessionData(materialsSchema);
-    expect(data.version).toBe(1);
+    expect(data.version).toBe(2);
     expect(data.messages).toEqual([]);
     expect(data.pendingWrites).toEqual({});
     expect(getSchema(data, 'landscaping', 'materials')).toEqual(materialsSchema);
@@ -45,6 +45,32 @@ describe('state', () => {
   test('getSchema returns undefined for an object never described', () => {
     const data = createInitialSessionData(materialsSchema);
     expect(getSchema(data, 'landscaping', 'unknown_object')).toBeUndefined();
+  });
+
+  test('createInitialSessionData seeds an empty pendingDescribeQueries map', () => {
+    const data = createInitialSessionData(materialsSchema);
+    expect(data.pendingDescribeQueries).toEqual({});
+  });
+
+  test('schemaKey does not collide when a dir/object pair contains the "/" separator itself', () => {
+    const dataA = createInitialSessionData({ ...materialsSchema, dir: 'a/b', object: 'c' });
+    cacheSchema(dataA, { ...materialsSchema, dir: 'a', object: 'b/c' });
+    expect(getSchema(dataA, 'a/b', 'c')).toEqual({ ...materialsSchema, dir: 'a/b', object: 'c' });
+    expect(getSchema(dataA, 'a', 'b/c')).toEqual({ ...materialsSchema, dir: 'a', object: 'b/c' });
+  });
+
+  test('applyTurnInputs caches the schema from a query_result answering a pending describe-object query', () => {
+    const data = createInitialSessionData(materialsSchema);
+    data.pendingDescribeQueries['call_describe_1'] = { dir: 'landscaping', object: 'line_items' };
+    applyTurnInputs(data, [{ kind: 'query_result', id: 'call_describe_1', data: lineItemsSchema }]);
+    expect(getSchema(data, 'landscaping', 'line_items')).toEqual(lineItemsSchema);
+    expect(data.pendingDescribeQueries['call_describe_1']).toBeUndefined();
+  });
+
+  test('applyTurnInputs does not cache a query_result for an id with no pending describe-object query', () => {
+    const data = createInitialSessionData(materialsSchema);
+    applyTurnInputs(data, [{ kind: 'query_result', id: 'call_find_1', data: [{ name: 'x' }] }]);
+    expect(getSchema(data, 'landscaping', 'line_items')).toBeUndefined();
   });
 
   test('serializeState / deserializeState round-trips', () => {

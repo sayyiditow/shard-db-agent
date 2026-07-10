@@ -2,7 +2,7 @@ import type { ObjectSchema, TurnInput, WriteQuery } from './types';
 import { InvalidStateError } from './errors';
 import type { LlmMessage } from './llm-client';
 
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 const VALID_ROLES = new Set(['system', 'user', 'assistant', 'tool']);
 
 export interface PendingWrite {
@@ -10,15 +10,21 @@ export interface PendingWrite {
   toolCallId: string;
 }
 
+export interface PendingDescribeQuery {
+  dir: string;
+  object: string;
+}
+
 export interface SessionData {
   version: number;
   schemas: Record<string, ObjectSchema>;
   messages: LlmMessage[];
   pendingWrites: Record<string, PendingWrite>;
+  pendingDescribeQueries: Record<string, PendingDescribeQuery>;
 }
 
 function schemaKey(dir: string, object: string): string {
-  return `${dir}/${object}`;
+  return JSON.stringify([dir, object]);
 }
 
 export function createInitialSessionData(schema: ObjectSchema): SessionData {
@@ -27,6 +33,7 @@ export function createInitialSessionData(schema: ObjectSchema): SessionData {
     schemas: { [schemaKey(schema.dir, schema.object)]: schema },
     messages: [],
     pendingWrites: {},
+    pendingDescribeQueries: {},
   };
 }
 
@@ -66,6 +73,10 @@ function isValidPendingWrite(value: unknown): value is PendingWrite {
   return isPlainRecord(value) && typeof value.toolCallId === 'string' && isPlainRecord(value.body);
 }
 
+function isValidPendingDescribeQuery(value: unknown): value is PendingDescribeQuery {
+  return isPlainRecord(value) && typeof value.dir === 'string' && typeof value.object === 'string';
+}
+
 export function deserializeState(state: string): SessionData {
   const json = Buffer.from(state, 'base64').toString('utf-8');
 
@@ -83,7 +94,8 @@ export function deserializeState(state: string): SessionData {
     candidate.version !== STATE_VERSION ||
     typeof candidate.schemas !== 'object' ||
     !Array.isArray(candidate.messages) ||
-    typeof candidate.pendingWrites !== 'object'
+    typeof candidate.pendingWrites !== 'object' ||
+    typeof candidate.pendingDescribeQueries !== 'object'
   ) {
     throw new InvalidStateError('shard-db-agent: state is missing required fields or has an unsupported version');
   }
@@ -96,6 +108,12 @@ export function deserializeState(state: string): SessionData {
   }
   if (!isPlainRecord(candidate.pendingWrites) || !Object.values(candidate.pendingWrites).every(isValidPendingWrite)) {
     throw new InvalidStateError('shard-db-agent: state.pendingWrites contains a malformed entry');
+  }
+  if (
+    !isPlainRecord(candidate.pendingDescribeQueries) ||
+    !Object.values(candidate.pendingDescribeQueries).every(isValidPendingDescribeQuery)
+  ) {
+    throw new InvalidStateError('shard-db-agent: state.pendingDescribeQueries contains a malformed entry');
   }
 
   return candidate as SessionData;
@@ -123,6 +141,14 @@ export function pruneStaleToolResults(data: SessionData, keep: number): void {
 export function applyTurnInputs(data: SessionData, turnInputs: TurnInput[]): void {
   for (const input of turnInputs) {
     if (input.kind === 'query_result') {
+      const pendingDescribe = Object.prototype.hasOwnProperty.call(data.pendingDescribeQueries, input.id)
+        ? data.pendingDescribeQueries[input.id]
+        : undefined;
+      if (pendingDescribe && isObjectSchemaShape(input.data)) {
+        cacheSchema(data, input.data);
+      }
+      delete data.pendingDescribeQueries[input.id];
+
       data.messages.push({
         role: 'tool',
         tool_call_id: input.id,
