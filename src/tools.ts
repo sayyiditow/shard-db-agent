@@ -73,7 +73,6 @@ export const FIND_RECORDS_TOOL: LlmToolDef = {
         order_by: { type: 'string' },
         order: { type: 'string', enum: ['asc', 'desc'] },
         limit: { type: 'integer' },
-        offset: { type: 'integer' },
       },
       required: ['dir', 'object', 'criteria'],
     },
@@ -220,18 +219,46 @@ export function isProposeWriteToolCall(call: LlmToolCall): boolean {
   return call.function.name === 'propose_write';
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function assertString(value: unknown, field: string): asserts value is string {
+  if (typeof value !== 'string') {
+    throw new Error(`shard-db-agent: expected "${field}" to be a string`);
+  }
+}
+
+function assertArray(value: unknown, field: string): asserts value is unknown[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`shard-db-agent: expected "${field}" to be an array`);
+  }
+}
+
 export function toolCallToReadQuery(call: LlmToolCall): ReadQuery {
   const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
   switch (call.function.name) {
     case 'find_records':
+      assertString(args.dir, 'dir');
+      assertString(args.object, 'object');
+      assertArray(args.criteria, 'criteria');
       return { mode: 'find', ...(args as object) } as FindQuery;
     case 'count_records':
+      assertString(args.dir, 'dir');
+      assertString(args.object, 'object');
+      assertArray(args.criteria, 'criteria');
       return { mode: 'count', ...(args as object) } as CountQuery;
     case 'aggregate_records':
+      assertString(args.dir, 'dir');
+      assertString(args.object, 'object');
+      assertArray(args.aggregates, 'aggregates');
       return { mode: 'aggregate', ...(args as object) } as AggregateQuery;
     case 'describe_object':
+      assertString(args.dir, 'dir');
+      assertString(args.object, 'object');
       return { mode: 'describe-object', ...(args as object) } as DescribeObjectQuery;
     case 'list_objects':
+      assertString(args.dir, 'dir');
       return { mode: 'list-objects', ...(args as object) } as ListObjectsQuery;
     default:
       throw new Error(`shard-db-agent: "${call.function.name}" is not a read tool`);
@@ -244,5 +271,16 @@ export interface ProposeWriteArgs {
 }
 
 export function parseProposeWriteArgs(call: LlmToolCall): ProposeWriteArgs {
-  return JSON.parse(call.function.arguments) as ProposeWriteArgs;
+  const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+  assertString(args.summary, 'summary');
+  if (!isPlainObject(args.body)) {
+    throw new Error('shard-db-agent: expected "body" to be an object');
+  }
+  const body = args.body;
+  if (body.mode !== 'insert' && body.mode !== 'update' && body.mode !== 'delete') {
+    throw new Error('shard-db-agent: expected body.mode to be one of insert/update/delete');
+  }
+  assertString(body.dir, 'body.dir');
+  assertString(body.object, 'body.object');
+  return { summary: args.summary, body: body as unknown as WriteQuery };
 }

@@ -109,6 +109,21 @@ describe('tool definitions', () => {
     expect(() => toolCallToReadQuery(call)).toThrow();
   });
 
+  test('toolCallToReadQuery throws when find_records is missing dir', () => {
+    const call = toolCall('find_records', { object: 'materials', criteria: [] });
+    expect(() => toolCallToReadQuery(call)).toThrow();
+  });
+
+  test('toolCallToReadQuery throws when find_records criteria is not an array', () => {
+    const call = toolCall('find_records', { dir: 'landscaping', object: 'materials', criteria: 'not-an-array' });
+    expect(() => toolCallToReadQuery(call)).toThrow();
+  });
+
+  test('toolCallToReadQuery throws when aggregate_records is missing aggregates', () => {
+    const call = toolCall('aggregate_records', { dir: 'landscaping', object: 'materials' });
+    expect(() => toolCallToReadQuery(call)).toThrow();
+  });
+
   test('parseProposeWriteArgs parses summary and body', () => {
     const call = toolCall('propose_write', {
       summary: 'Add: Block retaining wall',
@@ -118,5 +133,20 @@ describe('tool definitions', () => {
       summary: 'Add: Block retaining wall',
       body: { mode: 'insert', dir: 'landscaping', object: 'line_items', value: { qty: 120 } },
     });
+  });
+
+  test('parseProposeWriteArgs throws when body is missing', () => {
+    const call = toolCall('propose_write', { summary: 'x' });
+    expect(() => parseProposeWriteArgs(call)).toThrow();
+  });
+
+  test('parseProposeWriteArgs throws when body.mode is not a valid write mode', () => {
+    const call = toolCall('propose_write', { summary: 'x', body: { mode: 'select', dir: 'd', object: 'o' } });
+    expect(() => parseProposeWriteArgs(call)).toThrow();
+  });
+
+  test('parseProposeWriteArgs throws when body.dir is missing', () => {
+    const call = toolCall('propose_write', { summary: 'x', body: { mode: 'insert', object: 'o', value: {} } });
+    expect(() => parseProposeWriteArgs(call)).toThrow();
   });
 });
