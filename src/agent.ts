@@ -7,6 +7,7 @@ import {
   createInitialSessionData,
   deserializeState,
   getSchema,
+  isObjectSchemaShape,
   pruneStaleToolResults,
   serializeState,
   type SessionData,
@@ -15,10 +16,11 @@ import { ALL_TOOL_DEFS, isProposeWriteToolCall, isReadToolCall, parseProposeWrit
 import { buildSystemPrompt } from './prompt';
 import { validateWriteAgainstSchema } from './write-validate';
 import { mintKey } from './key-mint';
-import { WriteValidationError } from './errors';
+import { LlmToolCallRejectedError, WriteValidationError } from './errors';
 
 const DEFAULT_MAX_TOOL_ITERATIONS = 8;
 const DEFAULT_MAX_RETAINED_TOOL_RESULTS = 4;
+const DEFAULT_MAX_TOOL_RESULT_CHARS = 20_000;
 
 export interface AgentOptions {
   llmClient?: LlmClient;
@@ -29,6 +31,14 @@ export interface AgentOptions {
   maxToolIterations?: number;
   /** How many most-recent tool results to keep verbatim; older ones are replaced with a stale marker. Default 4. */
   maxRetainedToolResults?: number;
+  /** Max characters of a single executor result's JSON allowed into the conversation before truncation. Default 20000. */
+  maxToolResultChars?: number;
+}
+
+function truncateToolResult(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content;
+  const omitted = content.length - maxChars;
+  return `${content.slice(0, maxChars)}... [truncated — ${omitted} more characters omitted; narrow your query with "limit"/"fields" and try again]`;
 }
 
 export class Agent {
@@ -36,6 +46,7 @@ export class Agent {
   private readonly executor?: (query: ReadQuery) => Promise<unknown>;
   private readonly maxToolIterations: number;
   private readonly maxRetainedToolResults: number;
+  private readonly maxToolResultChars: number;
 
   constructor(options: AgentOptions = {}) {
     if (options.llmClient) {
@@ -53,6 +64,7 @@ export class Agent {
     this.executor = options.executor;
     this.maxToolIterations = options.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
     this.maxRetainedToolResults = options.maxRetainedToolResults ?? DEFAULT_MAX_RETAINED_TOOL_RESULTS;
+    this.maxToolResultChars = options.maxToolResultChars ?? DEFAULT_MAX_TOOL_RESULT_CHARS;
   }
 
   async turn(
@@ -71,16 +83,32 @@ export class Agent {
       data.messages.push({ role: 'user', content: text });
     }
 
-    pruneStaleToolResults(data, this.maxRetainedToolResults);
-
     let llmMs = 0;
 
     for (let iteration = 0; iteration < this.maxToolIterations; iteration++) {
+      pruneStaleToolResults(data, this.maxRetainedToolResults);
+
       const systemPrompt = buildSystemPrompt(data.schemas);
       const messages: LlmMessage[] = [{ role: 'system', content: systemPrompt }, ...data.messages];
 
       const llmStart = performance.now();
-      const assistantMessage = await this.llmClient.complete({ messages, tools: ALL_TOOL_DEFS });
+      let assistantMessage: LlmMessage;
+      try {
+        assistantMessage = await this.llmClient.complete({ messages, tools: ALL_TOOL_DEFS });
+      } catch (err) {
+        if (err instanceof LlmToolCallRejectedError) {
+          llmMs += performance.now() - llmStart;
+          if (process.env.AGENT_TRACE) {
+            console.error(`[trace] iter=${iteration} tool_use_failed: ${err.providerMessage ?? err.message}`);
+          }
+          data.messages.push({
+            role: 'user',
+            content: `Your last tool call was rejected as invalid: ${err.providerMessage ?? err.message}. Retry with corrected arguments — check operator names/symbols and value types against the tool schema.`,
+          });
+          continue;
+        }
+        throw err;
+      }
       const callMs = performance.now() - llmStart;
       llmMs += callMs;
       data.messages.push(assistantMessage);
@@ -95,40 +123,47 @@ export class Agent {
         return { kind: 'answer', text: assistantMessage.content ?? '', state: serializeState(data), llmMs: Math.round(llmMs) };
       }
 
-      const writeCall = toolCalls.find(isProposeWriteToolCall);
+      const answeredIds = new Set<string>();
+      const answer = (callId: string, content: string) => {
+        answeredIds.add(callId);
+        data.messages.push({ role: 'tool', tool_call_id: callId, content });
+      };
+      const answerUnhandled = () => {
+        for (const call of toolCalls) {
+          if (answeredIds.has(call.id)) continue;
+          answer(call.id, JSON.stringify({ skipped: 'not executed this turn — see the other tool result(s) in this turn for what happened' }));
+        }
+      };
+
+      const writeCalls = toolCalls.filter(isProposeWriteToolCall);
+      const writeCall = writeCalls[0];
+
       if (writeCall) {
+        for (const extra of writeCalls.slice(1)) {
+          answer(extra.id, JSON.stringify({ error: 'only one propose_write is processed per turn — resubmit this call on a later turn' }));
+        }
+
         let summary: string;
         let body: WriteQuery;
         try {
           ({ summary, body } = parseProposeWriteArgs(writeCall));
         } catch {
-          data.messages.push({
-            role: 'tool',
-            tool_call_id: writeCall.id,
-            content: JSON.stringify({ error: 'malformed tool call arguments — please retry with valid JSON' }),
-          });
+          answer(writeCall.id, JSON.stringify({ error: 'malformed tool call arguments — please retry with valid JSON' }));
+          answerUnhandled();
           continue;
         }
         const objSchema = getSchema(data, body.dir, body.object);
         if (!objSchema) {
-          data.messages.push({
-            role: 'tool',
-            tool_call_id: writeCall.id,
-            content: JSON.stringify({
-              error: `unknown object: ${body.dir}/${body.object} — pick a known object`,
-            }),
-          });
+          answer(writeCall.id, JSON.stringify({ error: `unknown object: ${body.dir}/${body.object} — pick a known object` }));
+          answerUnhandled();
           continue;
         }
         try {
           validateWriteAgainstSchema(objSchema, body);
         } catch (err) {
           if (err instanceof WriteValidationError) {
-            data.messages.push({
-              role: 'tool',
-              tool_call_id: writeCall.id,
-              content: JSON.stringify({ error: 'invalid write', issues: err.issues }),
-            });
+            answer(writeCall.id, JSON.stringify({ error: 'invalid write', issues: err.issues }));
+            answerUnhandled();
             continue;
           }
           throw err;
@@ -138,6 +173,8 @@ export class Agent {
         const finalBody: WriteQuery = body.mode === 'insert' && !body.key ? { ...body, key: mintKey(pendingId) } : body;
 
         data.pendingWrites[pendingId] = { body: finalBody, toolCallId: writeCall.id };
+        answeredIds.add(writeCall.id);
+        answerUnhandled();
 
         return {
           kind: 'proposed_write',
@@ -150,32 +187,41 @@ export class Agent {
       }
 
       const readCalls = toolCalls.filter(isReadToolCall);
+      const unknownCalls = toolCalls.filter((c) => !isReadToolCall(c) && !isProposeWriteToolCall(c));
+      for (const call of unknownCalls) {
+        answer(call.id, JSON.stringify({ error: `unknown tool "${call.function.name}"` }));
+      }
+
       const parsedReadCalls: { call: LlmToolCall; query: ReadQuery }[] = [];
       for (const call of readCalls) {
         try {
           parsedReadCalls.push({ call, query: toolCallToReadQuery(call) });
         } catch {
-          data.messages.push({
-            role: 'tool',
-            tool_call_id: call.id,
-            content: JSON.stringify({ error: 'malformed tool call arguments — please retry with valid JSON' }),
-          });
+          answer(call.id, JSON.stringify({ error: 'malformed tool call arguments — please retry with valid JSON' }));
         }
       }
 
       if (this.executor) {
-        for (const { call, query } of parsedReadCalls) {
-          const result = await this.executor(query);
-          if (query.mode === 'describe-object' && result != null && !('error' in (result as object))) {
-            cacheSchema(data, result as ObjectSchema);
+        const results = await Promise.all(
+          parsedReadCalls.map(async ({ call, query }) => ({ call, query, result: await this.executor!(query) })),
+        );
+        for (const { call, query, result } of results) {
+          if (query.mode === 'describe-object' && isObjectSchemaShape(result)) {
+            cacheSchema(data, result);
           }
-          data.messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
+          answer(call.id, truncateToolResult(JSON.stringify(result), this.maxToolResultChars));
         }
         continue;
       }
 
       if (parsedReadCalls.length === 0) {
         continue;
+      }
+
+      for (const { call, query } of parsedReadCalls) {
+        if (query.mode === 'describe-object') {
+          data.pendingDescribeQueries[call.id] = { dir: query.dir, object: query.object };
+        }
       }
 
       const queries: QueryRequestItem[] = parsedReadCalls.map(({ call, query }) => ({ id: call.id, query }));

@@ -1,9 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import { Agent } from '../src/agent';
 import { FakeLlmClient } from './fixtures/fake-llm-client';
-import { InvalidStateError } from '../src/errors';
+import { InvalidStateError, LlmToolCallRejectedError } from '../src/errors';
+import { deserializeState, getSchema, STALE_TOOL_RESULT_MARKER } from '../src/state';
 import type { ObjectSchema } from '../src/types';
-import type { LlmMessage, LlmToolCall } from '../src/llm-client';
+import type { LlmClient, LlmCompleteParams, LlmMessage, LlmToolCall } from '../src/llm-client';
 
 const materialsSchema: ObjectSchema = {
   dir: 'landscaping',
@@ -502,6 +503,260 @@ describe('Agent.turn', () => {
     expect(result.llmMs).toBeGreaterThanOrEqual(55);
     // The 150ms executor delay must not be counted -- well under 30+30+150.
     expect(result.llmMs).toBeLessThan(140);
+  });
+
+  test('a very large executor result is truncated before entering the conversation', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [findToolCall('call_1', { dir: 'landscaping', object: 'materials', criteria: [] })],
+      },
+      { role: 'assistant', content: 'done' },
+    ]);
+    const bigResult = Array.from({ length: 5000 }, (_, i) => ({ name: `item_${i}`, unit_price: i }));
+    const agent = new Agent({ llmClient: llm, executor: async () => bigResult, maxToolResultChars: 500 });
+
+    await agent.turn(null, 'find everything', materialsSchema);
+
+    const secondCallMessages = llm.callAt(1).messages;
+    const toolMessage = secondCallMessages.find((m) => m.tool_call_id === 'call_1');
+    expect(toolMessage?.content).toBeDefined();
+    expect((toolMessage?.content as string).length).toBeLessThan(700);
+    expect(toolMessage?.content).toContain('truncated');
+  });
+
+  test('pruneStaleToolResults runs every iteration, not just once before the first', async () => {
+    const llm = new FakeLlmClient([
+      { role: 'assistant', content: null, tool_calls: [findToolCall('call_1', { dir: 'landscaping', object: 'materials', criteria: [] })] },
+      { role: 'assistant', content: null, tool_calls: [findToolCall('call_2', { dir: 'landscaping', object: 'materials', criteria: [] })] },
+      { role: 'assistant', content: null, tool_calls: [findToolCall('call_3', { dir: 'landscaping', object: 'materials', criteria: [] })] },
+      { role: 'assistant', content: 'done' },
+    ]);
+    const agent = new Agent({ llmClient: llm, executor: async () => [{ name: 'x' }], maxRetainedToolResults: 1 });
+
+    await agent.turn(null, 'find repeatedly', materialsSchema);
+
+    const finalMessages = llm.callAt(3).messages;
+    const toolMessages = finalMessages.filter((m) => m.role === 'tool');
+    expect(toolMessages).toHaveLength(3);
+    expect(toolMessages[0].content).toBe(STALE_TOOL_RESULT_MARKER);
+    expect(toolMessages[1].content).toBe(STALE_TOOL_RESULT_MARKER);
+    expect(toolMessages[2].content).not.toBe(STALE_TOOL_RESULT_MARKER);
+  });
+
+  test('with an executor, multiple read tool calls in the same message run concurrently, not serially', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          findToolCall('call_1', { dir: 'landscaping', object: 'materials', criteria: [] }),
+          findToolCall('call_2', { dir: 'landscaping', object: 'materials', criteria: [] }),
+        ],
+      },
+      { role: 'assistant', content: 'done' },
+    ]);
+    const agent = new Agent({
+      llmClient: llm,
+      executor: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return [];
+      },
+    });
+
+    const start = Date.now();
+    await agent.turn(null, 'find twice', materialsSchema);
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(250);
+  });
+
+  test('a describe_object result that resolves to a plain string does not crash the turn', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'call_describe', type: 'function', function: { name: 'describe_object', arguments: JSON.stringify({ dir: 'landscaping', object: 'ghost' }) } },
+        ],
+      },
+      { role: 'assistant', content: 'that object does not exist' },
+    ]);
+    const agent = new Agent({ llmClient: llm, executor: async () => 'object not found' });
+
+    const result = await agent.turn(null, 'describe ghost', materialsSchema);
+    expect(result.kind).toBe('answer');
+  });
+
+  test('a describe_object result missing required schema fields is not cached, leaving the real schema untouched', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'call_describe', type: 'function', function: { name: 'describe_object', arguments: JSON.stringify({ dir: 'landscaping', object: 'materials' }) } },
+        ],
+      },
+      { role: 'assistant', content: 'ok' },
+    ]);
+    const agent = new Agent({ llmClient: llm, executor: async () => ({ dir: 'landscaping', object: 'materials' }) });
+
+    const result = await agent.turn(null, 'describe materials', materialsSchema);
+    expect(result.kind).toBe('answer');
+    const data = deserializeState((result as { state: string }).state);
+    expect(getSchema(data, 'landscaping', 'materials')).toEqual(materialsSchema);
+  });
+
+  test('in host-execution mode (no executor), a describe_object query_result caches the schema for the next turn', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'call_describe', type: 'function', function: { name: 'describe_object', arguments: JSON.stringify({ dir: 'landscaping', object: 'line_items' }) } },
+        ],
+      },
+      { role: 'assistant', content: 'ok, I know line_items now' },
+    ]);
+    const agent = new Agent({ llmClient: llm });
+
+    const turn1 = await agent.turn(null, 'tell me about line_items', materialsSchema);
+    expect(turn1.kind).toBe('query_request');
+    if (turn1.kind !== 'query_request') throw new Error('expected query_request');
+
+    const turn2 = await agent.turn(turn1.state, null, undefined, [
+      { kind: 'query_result', id: turn1.queries[0].id, data: lineItemsSchema },
+    ]);
+    expect(turn2.kind).toBe('answer');
+
+    const data = deserializeState(turn2.state);
+    expect(getSchema(data, 'landscaping', 'line_items')).toEqual(lineItemsSchema);
+  });
+
+  test('a propose_write call alongside a sibling read call still answers the read call instead of leaving it dangling', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          writeToolCall('call_write', {
+            summary: 'Add a thing',
+            body: { mode: 'insert', dir: 'landscaping', object: 'line_items', value: { description: 'x', qty: 1, unit_price: 1, total: 1 } },
+          }),
+          findToolCall('call_extra_read', { dir: 'landscaping', object: 'materials', criteria: [] }),
+        ],
+      },
+    ]);
+    const agent = new Agent({ llmClient: llm });
+
+    const result = await agent.turn(null, 'add it', lineItemsSchema);
+    expect(result.kind).toBe('proposed_write');
+
+    const data = deserializeState((result as { state: string }).state);
+    const extraReadAnswer = data.messages.find((m) => m.tool_call_id === 'call_extra_read');
+    expect(extraReadAnswer).toBeDefined();
+    expect(extraReadAnswer?.content).toContain('not executed');
+  });
+
+  test('a second propose_write call in the same message is answered with an error, not silently dropped', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          writeToolCall('call_write_1', {
+            summary: 'first',
+            body: { mode: 'insert', dir: 'landscaping', object: 'line_items', value: { description: 'x', qty: 1, unit_price: 1, total: 1 } },
+          }),
+          writeToolCall('call_write_2', {
+            summary: 'second',
+            body: { mode: 'insert', dir: 'landscaping', object: 'line_items', value: { description: 'y', qty: 1, unit_price: 1, total: 1 } },
+          }),
+        ],
+      },
+    ]);
+    const agent = new Agent({ llmClient: llm });
+
+    const result = await agent.turn(null, 'add two things', lineItemsSchema);
+    expect(result.kind).toBe('proposed_write');
+
+    const data = deserializeState((result as { state: string }).state);
+    const secondAnswer = data.messages.find((m) => m.tool_call_id === 'call_write_2');
+    expect(secondAnswer).toBeDefined();
+    expect(secondAnswer?.content).toContain('error');
+  });
+
+  test('an unrecognized tool name is answered with an error instead of silently dropped', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: 'call_unknown', type: 'function', function: { name: 'delete_everything', arguments: '{}' } }],
+      },
+      { role: 'assistant', content: 'ok' },
+    ]);
+    const agent = new Agent({ llmClient: llm });
+
+    const result = await agent.turn(null, 'do something weird', materialsSchema);
+    expect(result.kind).toBe('answer');
+    expect(llm.callCount).toBe(2);
+    const toolMessage = llm.callAt(1).messages.find((m) => m.tool_call_id === 'call_unknown');
+    expect(toolMessage).toBeDefined();
+    expect(toolMessage?.content).toContain('error');
+  });
+
+  test('a well-formed but wrong-shaped propose_write tool call (missing body) does not crash the turn', async () => {
+    const llm = new FakeLlmClient([
+      { role: 'assistant', content: null, tool_calls: [writeToolCall('call_w_bad', { summary: 'x' })] },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          writeToolCall('call_w_good', {
+            summary: 'Add a thing',
+            body: { mode: 'insert', dir: 'landscaping', object: 'line_items', value: { description: 'x', qty: 1, unit_price: 1, total: 1 } },
+          }),
+        ],
+      },
+    ]);
+    const agent = new Agent({ llmClient: llm });
+
+    const result = await agent.turn(null, 'add it', lineItemsSchema);
+    expect(result.kind).toBe('proposed_write');
+    expect(llm.callCount).toBe(2);
+    const toolMessage = llm.callAt(1).messages.find((m) => m.tool_call_id === 'call_w_bad');
+    expect(toolMessage?.content).toContain('error');
+  });
+
+  test('a provider tool_use_failed rejection is caught and fed back to the model instead of crashing the turn', async () => {
+    class RejectingThenOkLlmClient implements LlmClient {
+      calls = 0;
+      async complete(_params: LlmCompleteParams): Promise<LlmMessage> {
+        this.calls++;
+        if (this.calls === 1) {
+          throw new LlmToolCallRejectedError('rejected', { providerCode: 'tool_use_failed', providerMessage: 'bad op' });
+        }
+        return { role: 'assistant', content: 'Recovered — there are 10 materials.' };
+      }
+    }
+    const llm = new RejectingThenOkLlmClient();
+    const agent = new Agent({ llmClient: llm });
+
+    const result = await agent.turn(null, 'how many materials', materialsSchema);
+
+    expect(result.kind).toBe('answer');
+    expect(llm.calls).toBe(2);
+  });
+
+  test('repeated tool_use_failed rejections eventually exhaust max iterations and throw, instead of looping forever', async () => {
+    class AlwaysRejectingLlmClient implements LlmClient {
+      async complete(): Promise<LlmMessage> {
+        throw new LlmToolCallRejectedError('rejected', { providerCode: 'tool_use_failed' });
+      }
+    }
+    const agent = new Agent({ llmClient: new AlwaysRejectingLlmClient(), maxToolIterations: 3 });
+    await expect(agent.turn(null, 'test', materialsSchema)).rejects.toThrow(/exceeded max tool-use iterations/);
   });
 
   test('a malformed (truncated) read tool call does not crash the turn; the LLM gets an error and can retry', async () => {
