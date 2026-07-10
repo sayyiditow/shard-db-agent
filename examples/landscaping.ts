@@ -159,7 +159,7 @@ async function main() {
 
       let turn;
       try {
-        turn = await agent.turn(state, input, schemaValues[0]);
+        turn = await agent.turn(state, input, schemaValues);
       } catch (err) {
         console.error();
         console.error(`Agent error: ${(err as Error).message}`);
@@ -208,15 +208,24 @@ async function main() {
         const outcome = confirm.trim().toLowerCase() === 'yes' ? 'committed' : 'rejected';
 
         // Execute the write if confirmed
+        let commitFailed = false;
         if (outcome === 'committed') {
-          await client.query(turn.body as Record<string, unknown>);
+          try {
+            await client.query(turn.body as Record<string, unknown>);
+          } catch (err) {
+            console.error();
+            console.error(`Commit failed: ${(err as Error).message}`);
+            commitFailed = true;
+          }
         }
+
+        const effectiveOutcome = commitFailed ? 'rejected' : outcome;
 
         // Feed outcome back to agent
         let followUp;
         try {
           followUp = await agent.turn(state, null, undefined, [
-            { kind: 'write_outcome', pendingId: turn.pendingId, outcome },
+            { kind: 'write_outcome', pendingId: turn.pendingId, outcome: effectiveOutcome },
           ]);
         } catch (err) {
           console.error();
