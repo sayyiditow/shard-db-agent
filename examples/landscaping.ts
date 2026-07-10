@@ -157,7 +157,16 @@ async function main() {
       // Collect schemas to pass on first turn
       const schemaValues = Object.values(schemas);
 
-      const turn = await agent.turn(state, input, schemaValues[0]);
+      let turn;
+      try {
+        turn = await agent.turn(state, input, schemaValues[0]);
+      } catch (err) {
+        console.error();
+        console.error(`Agent error: ${(err as Error).message}`);
+        console.error('(session state unchanged — try rephrasing)');
+        console.error();
+        continue;
+      }
 
       // Update state
       state = turn.state;
@@ -204,9 +213,17 @@ async function main() {
         }
 
         // Feed outcome back to agent
-        const followUp = await agent.turn(state, null, undefined, [
-          { kind: 'write_outcome', pendingId: turn.pendingId, outcome },
-        ]);
+        let followUp;
+        try {
+          followUp = await agent.turn(state, null, undefined, [
+            { kind: 'write_outcome', pendingId: turn.pendingId, outcome },
+          ]);
+        } catch (err) {
+          console.error();
+          console.error(`Agent error while processing the write outcome: ${(err as Error).message}`);
+          console.error();
+          continue;
+        }
 
         state = followUp.state;
 
