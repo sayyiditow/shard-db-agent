@@ -25,29 +25,39 @@ const CRITERION_OPS: CriterionOp[] = [
   'regex', 'not_regex',
 ];
 
-/**
- * Criteria tree node: either a concrete {field, op, value, value2?} leaf, or
- * an {or: [...]} / {and: [...]} combinator nesting more nodes. Top-level
- * properties/required describe the leaf shape so a bare leaf validates
- * directly; oneOf spells out all three legal shapes so models reliably
- * produce well-formed criteria instead of guessing against an empty schema.
- */
-const CRITERION_NODE_SCHEMA: Record<string, unknown> = {
+const CRITERION_LEAF_SCHEMA: Record<string, unknown> = {
   type: 'object',
   properties: {
     field: { type: 'string', description: 'Field name to filter on.' },
     op: { type: 'string', enum: CRITERION_OPS, description: 'Comparison operator.' },
     value: { type: ['string', 'number', 'boolean'], description: 'Comparison value; the server coerces to the field type.' },
     value2: { type: ['string', 'number', 'boolean'], description: 'Second value, required only for range ops like between/len_between.' },
-    or: { type: 'array', items: {}, description: 'OR-combined child criteria nodes.' },
-    and: { type: 'array', items: {}, description: 'AND-combined child criteria nodes.' },
   },
   required: ['field', 'op', 'value'],
-  oneOf: [
-    { type: 'object', properties: { field: { type: 'string' } }, required: ['field'] },
-    { type: 'object', properties: { or: { type: 'array', items: {} } }, required: ['or'] },
-    { type: 'object', properties: { and: { type: 'array', items: {} } }, required: ['and'] },
-  ],
+};
+
+const CRITERION_OR_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: { or: { type: 'array', items: {}, description: 'OR-combined child criteria nodes.' } },
+  required: ['or'],
+};
+
+const CRITERION_AND_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: { and: { type: 'array', items: {}, description: 'AND-combined child criteria nodes.' } },
+  required: ['and'],
+};
+
+/**
+ * Criteria tree node: either a concrete {field, op, value, value2?} leaf, or
+ * an {or: [...]} / {and: [...]} combinator nesting more nodes. "required"
+ * must live inside each oneOf branch, not at this level — a top-level
+ * "required" would apply to every branch simultaneously (JSON Schema ANDs
+ * sibling keywords), making the or/and branches permanently unsatisfiable
+ * even though oneOf claims to allow them.
+ */
+const CRITERION_NODE_SCHEMA: Record<string, unknown> = {
+  oneOf: [CRITERION_LEAF_SCHEMA, CRITERION_OR_SCHEMA, CRITERION_AND_SCHEMA],
 };
 
 export const FIND_RECORDS_TOOL: LlmToolDef = {

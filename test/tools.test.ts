@@ -36,44 +36,51 @@ describe('tool definitions', () => {
     expect(READ_TOOL_DEFS.some((t) => t.function.name === 'propose_write')).toBe(false);
   });
 
-  test('find_records criteria items declare a concrete field/op/value shape, not an empty schema', () => {
+  test('find_records criteria items declare a concrete field/op/value shape in the leaf oneOf branch, not an empty schema', () => {
     const schema = criteriaItemSchema(FIND_RECORDS_TOOL);
     expect(schema).not.toEqual({});
-    const props = schema.properties as Record<string, unknown>;
+    const oneOf = schema.oneOf as Record<string, unknown>[];
+    const leaf = oneOf[0];
+    const props = leaf.properties as Record<string, unknown>;
     expect(Object.keys(props)).toEqual(expect.arrayContaining(['field', 'op', 'value', 'value2']));
-    expect(schema.required).toEqual(expect.arrayContaining(['field', 'op', 'value']));
+    expect(leaf.required).toEqual(expect.arrayContaining(['field', 'op', 'value']));
   });
 
   test('find_records criteria op is constrained to the real operator set', () => {
     const schema = criteriaItemSchema(FIND_RECORDS_TOOL);
-    const props = schema.properties as Record<string, { enum?: string[] }>;
+    const oneOf = schema.oneOf as Record<string, unknown>[];
+    const props = oneOf[0].properties as Record<string, { enum?: string[] }>;
     expect(props.op.enum).toEqual(expect.arrayContaining(['eq', 'lt', 'gt', 'between', 'in', 'like', 'contains', 'starts_with']));
   });
 
   test('find_records criteria op enum includes symbol operators alongside word forms', () => {
     const schema = criteriaItemSchema(FIND_RECORDS_TOOL);
-    const props = schema.properties as Record<string, { enum?: string[] }>;
+    const oneOf = schema.oneOf as Record<string, unknown>[];
+    const props = oneOf[0].properties as Record<string, { enum?: string[] }>;
     expect(props.op.enum).toEqual(expect.arrayContaining(['>', '<', '>=', '<=', '=', '!=']));
   });
 
   test('find_records criteria value and value2 accept string, number, or boolean per JSON Schema', () => {
     const schema = criteriaItemSchema(FIND_RECORDS_TOOL);
-    const props = schema.properties as Record<string, { type?: string[] }>;
+    const oneOf = schema.oneOf as Record<string, unknown>[];
+    const props = oneOf[0].properties as Record<string, { type?: string[] }>;
     expect(props.value.type).toEqual(['string', 'number', 'boolean']);
     expect(props.value2.type).toEqual(['string', 'number', 'boolean']);
   });
 
-  test('count_records and aggregate_records criteria share the same concrete shape', () => {
+  test('count_records and aggregate_records criteria share the same concrete leaf shape', () => {
     for (const schema of [criteriaItemSchema(COUNT_RECORDS_TOOL), criteriaItemSchema(AGGREGATE_RECORDS_TOOL)]) {
       expect(schema).not.toEqual({});
-      expect(schema.required).toEqual(expect.arrayContaining(['field', 'op', 'value']));
+      const oneOf = schema.oneOf as Record<string, unknown>[];
+      expect(oneOf[0].required).toEqual(expect.arrayContaining(['field', 'op', 'value']));
     }
   });
 
   test('aggregate_records having items also declare the concrete criterion shape', () => {
     const schema = criteriaItemSchema(AGGREGATE_RECORDS_TOOL, 'having');
     expect(schema).not.toEqual({});
-    expect(schema.required).toEqual(expect.arrayContaining(['field', 'op', 'value']));
+    const oneOf = schema.oneOf as Record<string, unknown>[];
+    expect(oneOf[0].required).toEqual(expect.arrayContaining(['field', 'op', 'value']));
   });
 
   test('criteria items still allow or/and combinator nodes', () => {
@@ -82,6 +89,12 @@ describe('tool definitions', () => {
     expect(oneOf).toBeDefined();
     const requiredKeys = oneOf.map((s) => (s.required as string[])[0]);
     expect(requiredKeys).toEqual(expect.arrayContaining(['field', 'or', 'and']));
+  });
+
+  test('the criterion node schema has no top-level "required"/"properties" that would conflict with the or/and oneOf branches', () => {
+    const schema = criteriaItemSchema(FIND_RECORDS_TOOL);
+    expect(schema.required).toBeUndefined();
+    expect(schema.properties).toBeUndefined();
   });
 
   test('isReadToolCall / isProposeWriteToolCall classify correctly', () => {
