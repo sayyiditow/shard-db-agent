@@ -1,5 +1,5 @@
 import type { AgentTurnResult, ObjectSchema, QueryRequestItem, ReadQuery, SessionState, TurnInput, WriteQuery } from './types';
-import type { LlmClient, LlmMessage } from './llm-client';
+import type { LlmClient, LlmMessage, LlmToolCall } from './llm-client';
 import { OpenAICompatLlmClient } from './llm-client';
 import {
   applyTurnInputs,
@@ -7,6 +7,7 @@ import {
   createInitialSessionData,
   deserializeState,
   getSchema,
+  pruneStaleToolResults,
   serializeState,
   type SessionData,
 } from './state';
@@ -17,6 +18,7 @@ import { mintKey } from './key-mint';
 import { WriteValidationError } from './errors';
 
 const DEFAULT_MAX_TOOL_ITERATIONS = 8;
+const DEFAULT_MAX_RETAINED_TOOL_RESULTS = 4;
 
 export interface AgentOptions {
   llmClient?: LlmClient;
@@ -25,12 +27,15 @@ export interface AgentOptions {
   apiKey?: string;
   model?: string;
   maxToolIterations?: number;
+  /** How many most-recent tool results to keep verbatim; older ones are replaced with a stale marker. Default 4. */
+  maxRetainedToolResults?: number;
 }
 
 export class Agent {
   private readonly llmClient: LlmClient;
   private readonly executor?: (query: ReadQuery) => Promise<unknown>;
   private readonly maxToolIterations: number;
+  private readonly maxRetainedToolResults: number;
 
   constructor(options: AgentOptions = {}) {
     if (options.llmClient) {
@@ -47,6 +52,7 @@ export class Agent {
     }
     this.executor = options.executor;
     this.maxToolIterations = options.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
+    this.maxRetainedToolResults = options.maxRetainedToolResults ?? DEFAULT_MAX_RETAINED_TOOL_RESULTS;
   }
 
   async turn(
@@ -64,6 +70,8 @@ export class Agent {
     if (text !== null) {
       data.messages.push({ role: 'user', content: text });
     }
+
+    pruneStaleToolResults(data, this.maxRetainedToolResults);
 
     let llmMs = 0;
 
@@ -89,7 +97,18 @@ export class Agent {
 
       const writeCall = toolCalls.find(isProposeWriteToolCall);
       if (writeCall) {
-        const { summary, body } = parseProposeWriteArgs(writeCall);
+        let summary: string;
+        let body: WriteQuery;
+        try {
+          ({ summary, body } = parseProposeWriteArgs(writeCall));
+        } catch {
+          data.messages.push({
+            role: 'tool',
+            tool_call_id: writeCall.id,
+            content: JSON.stringify({ error: 'malformed tool call arguments — please retry with valid JSON' }),
+          });
+          continue;
+        }
         const objSchema = getSchema(data, body.dir, body.object);
         if (!objSchema) {
           data.messages.push({
@@ -131,12 +150,21 @@ export class Agent {
       }
 
       const readCalls = toolCalls.filter(isReadToolCall);
-      const readQueries = readCalls.map(toolCallToReadQuery);
+      const parsedReadCalls: { call: LlmToolCall; query: ReadQuery }[] = [];
+      for (const call of readCalls) {
+        try {
+          parsedReadCalls.push({ call, query: toolCallToReadQuery(call) });
+        } catch {
+          data.messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify({ error: 'malformed tool call arguments — please retry with valid JSON' }),
+          });
+        }
+      }
 
       if (this.executor) {
-        for (let i = 0; i < readCalls.length; i++) {
-          const call = readCalls[i];
-          const query = readQueries[i];
+        for (const { call, query } of parsedReadCalls) {
           const result = await this.executor(query);
           if (query.mode === 'describe-object' && result != null && !('error' in (result as object))) {
             cacheSchema(data, result as ObjectSchema);
@@ -146,7 +174,11 @@ export class Agent {
         continue;
       }
 
-      const queries: QueryRequestItem[] = readCalls.map((call, i) => ({ id: call.id, query: readQueries[i] }));
+      if (parsedReadCalls.length === 0) {
+        continue;
+      }
+
+      const queries: QueryRequestItem[] = parsedReadCalls.map(({ call, query }) => ({ id: call.id, query }));
       return { kind: 'query_request', queries, state: serializeState(data), llmMs: Math.round(llmMs) };
     }
 

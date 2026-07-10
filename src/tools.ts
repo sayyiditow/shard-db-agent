@@ -2,12 +2,53 @@ import type { LlmToolDef, LlmToolCall } from './llm-client';
 import type {
   AggregateQuery,
   CountQuery,
+  CriterionOp,
   DescribeObjectQuery,
   FindQuery,
   ListObjectsQuery,
   ReadQuery,
   WriteQuery,
 } from './types';
+
+const CRITERION_OPS: CriterionOp[] = [
+  'eq', 'equal', 'neq', 'not_equal',
+  'lt', 'less', 'gt', 'greater', 'lte', 'less_eq', 'gte', 'greater_eq',
+  'between',
+  'in', 'nin', 'not_in',
+  'exists', 'nexists', 'not_exists',
+  'like', 'nlike', 'not_like',
+  'contains', 'ncontains', 'not_contains',
+  'starts', 'starts_with', 'ends', 'ends_with',
+  'ilike', 'not_ilike', 'icontains', 'not_icontains', 'istarts', 'iends',
+  'len_eq', 'len_neq', 'len_lt', 'len_gt', 'len_lte', 'len_gte', 'len_between',
+  'eq_field', 'neq_field', 'lt_field', 'gt_field', 'lte_field', 'gte_field',
+  'regex', 'not_regex',
+];
+
+/**
+ * Criteria tree node: either a concrete {field, op, value, value2?} leaf, or
+ * an {or: [...]} / {and: [...]} combinator nesting more nodes. Top-level
+ * properties/required describe the leaf shape so a bare leaf validates
+ * directly; oneOf spells out all three legal shapes so models reliably
+ * produce well-formed criteria instead of guessing against an empty schema.
+ */
+const CRITERION_NODE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    field: { type: 'string', description: 'Field name to filter on.' },
+    op: { type: 'string', enum: CRITERION_OPS, description: 'Comparison operator.' },
+    value: { type: 'string', description: 'Comparison value (as a string; the server coerces to the field type).' },
+    value2: { type: 'string', description: 'Second value, required only for range ops like between/len_between.' },
+    or: { type: 'array', items: {}, description: 'OR-combined child criteria nodes.' },
+    and: { type: 'array', items: {}, description: 'AND-combined child criteria nodes.' },
+  },
+  required: ['field', 'op', 'value'],
+  oneOf: [
+    { type: 'object', properties: { field: { type: 'string' } }, required: ['field'] },
+    { type: 'object', properties: { or: { type: 'array', items: {} } }, required: ['or'] },
+    { type: 'object', properties: { and: { type: 'array', items: {} } }, required: ['and'] },
+  ],
+};
 
 export const FIND_RECORDS_TOOL: LlmToolDef = {
   type: 'function',
@@ -21,7 +62,7 @@ export const FIND_RECORDS_TOOL: LlmToolDef = {
         object: { type: 'string' },
         criteria: {
           type: 'array',
-          items: {},
+          items: CRITERION_NODE_SCHEMA,
           description: 'AND-combined criteria; pass [] to match every record.',
         },
         fields: {
@@ -49,7 +90,7 @@ export const COUNT_RECORDS_TOOL: LlmToolDef = {
       properties: {
         dir: { type: 'string' },
         object: { type: 'string' },
-        criteria: { type: 'array', items: {} },
+        criteria: { type: 'array', items: CRITERION_NODE_SCHEMA },
       },
       required: ['dir', 'object', 'criteria'],
     },
@@ -66,7 +107,7 @@ export const AGGREGATE_RECORDS_TOOL: LlmToolDef = {
       properties: {
         dir: { type: 'string' },
         object: { type: 'string' },
-        criteria: { type: 'array', items: {} },
+        criteria: { type: 'array', items: CRITERION_NODE_SCHEMA },
         group_by: { type: 'array', items: { type: 'string' } },
         aggregates: {
           type: 'array',
@@ -80,7 +121,7 @@ export const AGGREGATE_RECORDS_TOOL: LlmToolDef = {
             required: ['fn', 'alias'],
           },
         },
-        having: { type: 'array', items: {} },
+        having: { type: 'array', items: CRITERION_NODE_SCHEMA },
         order_by: { type: 'string' },
         order: { type: 'string', enum: ['asc', 'desc'] },
         limit: { type: 'integer' },

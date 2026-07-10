@@ -504,6 +504,92 @@ describe('Agent.turn', () => {
     expect(result.llmMs).toBeLessThan(140);
   });
 
+  test('a malformed (truncated) read tool call does not crash the turn; the LLM gets an error and can retry', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'call_bad', type: 'function', function: { name: 'count_records', arguments: '{"dir":"landsc' } },
+        ],
+      },
+      { role: 'assistant', content: 'Sorry, let me try that again — there are 10 materials.' },
+    ]);
+    const agent = new Agent({ llmClient: llm });
+
+    const result = await agent.turn(null, 'how many materials do we have', materialsSchema);
+
+    expect(result.kind).toBe('answer');
+    expect(llm.callCount).toBe(2);
+    const secondCallMessages = llm.callAt(1).messages;
+    const toolMessage = secondCallMessages.find((m) => m.tool_call_id === 'call_bad');
+    expect(toolMessage).toBeDefined();
+    expect(toolMessage?.content).toContain('error');
+  });
+
+  test('a malformed read tool call alongside a valid one: the valid one still executes via the executor', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'call_bad', type: 'function', function: { name: 'count_records', arguments: '{"dir":' } },
+          findToolCall('call_good', { dir: 'landscaping', object: 'materials', criteria: [] }),
+        ],
+      },
+      { role: 'assistant', content: 'Versa-Lok is $6.85/sqft.' },
+    ]);
+    const executorCalls: unknown[] = [];
+    const agent = new Agent({
+      llmClient: llm,
+      executor: async (query) => {
+        executorCalls.push(query);
+        return [{ name: 'Versa-Lok', unit_price: 6.85 }];
+      },
+    });
+
+    const result = await agent.turn(null, 'What does Versa-Lok cost?', materialsSchema);
+
+    expect(result.kind).toBe('answer');
+    expect(executorCalls).toHaveLength(1);
+    const secondCallMessages = llm.callAt(1).messages;
+    expect(secondCallMessages.find((m) => m.tool_call_id === 'call_bad')?.content).toContain('error');
+    expect(secondCallMessages.find((m) => m.tool_call_id === 'call_good')?.content).toBe(
+      JSON.stringify([{ name: 'Versa-Lok', unit_price: 6.85 }]),
+    );
+  });
+
+  test('a malformed propose_write tool call does not crash the turn; the LLM gets an error and can retry', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'call_w_bad', type: 'function', function: { name: 'propose_write', arguments: '{"summary":"x","bod' } },
+        ],
+      },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          writeToolCall('call_w_good', {
+            summary: 'Add a thing',
+            body: { mode: 'insert', dir: 'landscaping', object: 'line_items', value: { description: 'x', qty: 1, unit_price: 1, total: 1 } },
+          }),
+        ],
+      },
+    ]);
+    const agent = new Agent({ llmClient: llm });
+
+    const result = await agent.turn(null, 'add it', lineItemsSchema);
+
+    expect(result.kind).toBe('proposed_write');
+    expect(llm.callCount).toBe(2);
+    const secondCallMessages = llm.callAt(1).messages;
+    const toolMessage = secondCallMessages.find((m) => m.tool_call_id === 'call_w_bad');
+    expect(toolMessage?.content).toContain('error');
+  });
+
   test('llmMs is a non-negative number on query_request and proposed_write results too', async () => {
     const llmForQuery = new FakeLlmClient([
       {

@@ -2,12 +2,20 @@ import { describe, test, expect } from 'bun:test';
 import {
   ALL_TOOL_DEFS,
   READ_TOOL_DEFS,
+  FIND_RECORDS_TOOL,
+  COUNT_RECORDS_TOOL,
+  AGGREGATE_RECORDS_TOOL,
   isReadToolCall,
   isProposeWriteToolCall,
   toolCallToReadQuery,
   parseProposeWriteArgs,
 } from '../src/tools';
 import type { LlmToolCall } from '../src/llm-client';
+
+function criteriaItemSchema(tool: typeof FIND_RECORDS_TOOL, prop: string = 'criteria'): Record<string, unknown> {
+  const params = tool.function.parameters as { properties: Record<string, { items: Record<string, unknown> }> };
+  return params.properties[prop].items;
+}
 
 function toolCall(name: string, args: unknown): LlmToolCall {
   return { id: 'call_1', type: 'function', function: { name, arguments: JSON.stringify(args) } };
@@ -26,6 +34,41 @@ describe('tool definitions', () => {
 
   test('READ_TOOL_DEFS excludes propose_write', () => {
     expect(READ_TOOL_DEFS.some((t) => t.function.name === 'propose_write')).toBe(false);
+  });
+
+  test('find_records criteria items declare a concrete field/op/value shape, not an empty schema', () => {
+    const schema = criteriaItemSchema(FIND_RECORDS_TOOL);
+    expect(schema).not.toEqual({});
+    const props = schema.properties as Record<string, unknown>;
+    expect(Object.keys(props)).toEqual(expect.arrayContaining(['field', 'op', 'value', 'value2']));
+    expect(schema.required).toEqual(expect.arrayContaining(['field', 'op', 'value']));
+  });
+
+  test('find_records criteria op is constrained to the real operator set', () => {
+    const schema = criteriaItemSchema(FIND_RECORDS_TOOL);
+    const props = schema.properties as Record<string, { enum?: string[] }>;
+    expect(props.op.enum).toEqual(expect.arrayContaining(['eq', 'lt', 'gt', 'between', 'in', 'like', 'contains', 'starts_with']));
+  });
+
+  test('count_records and aggregate_records criteria share the same concrete shape', () => {
+    for (const schema of [criteriaItemSchema(COUNT_RECORDS_TOOL), criteriaItemSchema(AGGREGATE_RECORDS_TOOL)]) {
+      expect(schema).not.toEqual({});
+      expect(schema.required).toEqual(expect.arrayContaining(['field', 'op', 'value']));
+    }
+  });
+
+  test('aggregate_records having items also declare the concrete criterion shape', () => {
+    const schema = criteriaItemSchema(AGGREGATE_RECORDS_TOOL, 'having');
+    expect(schema).not.toEqual({});
+    expect(schema.required).toEqual(expect.arrayContaining(['field', 'op', 'value']));
+  });
+
+  test('criteria items still allow or/and combinator nodes', () => {
+    const schema = criteriaItemSchema(FIND_RECORDS_TOOL);
+    const oneOf = schema.oneOf as Record<string, unknown>[];
+    expect(oneOf).toBeDefined();
+    const requiredKeys = oneOf.map((s) => (s.required as string[])[0]);
+    expect(requiredKeys).toEqual(expect.arrayContaining(['field', 'or', 'and']));
   });
 
   test('isReadToolCall / isProposeWriteToolCall classify correctly', () => {

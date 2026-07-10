@@ -6,6 +6,8 @@ import {
   serializeState,
   deserializeState,
   applyTurnInputs,
+  pruneStaleToolResults,
+  STALE_TOOL_RESULT_MARKER,
 } from '../src/state';
 import { InvalidStateError } from '../src/errors';
 import type { ObjectSchema } from '../src/types';
@@ -126,5 +128,66 @@ describe('state', () => {
     expect(() =>
       applyTurnInputs(data, [{ kind: 'write_outcome', pendingId: 'does-not-exist', outcome: 'committed' }]),
     ).toThrow(InvalidStateError);
+  });
+
+  test('pruneStaleToolResults leaves the most recent N tool messages untouched', () => {
+    const data = createInitialSessionData(materialsSchema);
+    data.messages.push(
+      { role: 'user', content: 'q1' },
+      { role: 'tool', tool_call_id: 'c1', content: JSON.stringify({ n: 1 }) },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'q2' },
+      { role: 'tool', tool_call_id: 'c2', content: JSON.stringify({ n: 2 }) },
+      { role: 'assistant', content: 'a2' },
+      { role: 'user', content: 'q3' },
+      { role: 'tool', tool_call_id: 'c3', content: JSON.stringify({ n: 3 }) },
+      { role: 'assistant', content: 'a3' },
+    );
+
+    pruneStaleToolResults(data, 2);
+
+    expect(data.messages[1].content).toBe(STALE_TOOL_RESULT_MARKER);
+    expect(data.messages[4].content).toBe(JSON.stringify({ n: 2 }));
+    expect(data.messages[7].content).toBe(JSON.stringify({ n: 3 }));
+  });
+
+  test('pruneStaleToolResults leaves non-tool messages untouched', () => {
+    const data = createInitialSessionData(materialsSchema);
+    data.messages.push(
+      { role: 'user', content: 'q1' },
+      { role: 'tool', tool_call_id: 'c1', content: JSON.stringify({ n: 1 }) },
+      { role: 'assistant', content: 'a1' },
+    );
+
+    pruneStaleToolResults(data, 0);
+
+    expect(data.messages[0]).toEqual({ role: 'user', content: 'q1' });
+    expect(data.messages[2]).toEqual({ role: 'assistant', content: 'a1' });
+  });
+
+  test('pruneStaleToolResults is a no-op when tool message count is within the keep limit', () => {
+    const data = createInitialSessionData(materialsSchema);
+    data.messages.push(
+      { role: 'user', content: 'q1' },
+      { role: 'tool', tool_call_id: 'c1', content: JSON.stringify({ n: 1 }) },
+    );
+
+    pruneStaleToolResults(data, 2);
+
+    expect(data.messages[1].content).toBe(JSON.stringify({ n: 1 }));
+  });
+
+  test('pruneStaleToolResults is idempotent on already-pruned messages', () => {
+    const data = createInitialSessionData(materialsSchema);
+    data.messages.push(
+      { role: 'tool', tool_call_id: 'c1', content: JSON.stringify({ n: 1 }) },
+      { role: 'tool', tool_call_id: 'c2', content: JSON.stringify({ n: 2 }) },
+    );
+
+    pruneStaleToolResults(data, 1);
+    pruneStaleToolResults(data, 1);
+
+    expect(data.messages[0].content).toBe(STALE_TOOL_RESULT_MARKER);
+    expect(data.messages[1].content).toBe(JSON.stringify({ n: 2 }));
   });
 });

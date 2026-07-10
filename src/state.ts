@@ -71,6 +71,25 @@ export function deserializeState(state: string): SessionData {
   return candidate as SessionData;
 }
 
+export const STALE_TOOL_RESULT_MARKER = 'superseded — see a later tool result in this conversation for current data';
+
+export function pruneStaleToolResults(data: SessionData, keep: number): void {
+  const toolIndices: number[] = [];
+  for (let i = 0; i < data.messages.length; i++) {
+    if (data.messages[i].role === 'tool') {
+      toolIndices.push(i);
+    }
+  }
+
+  const staleCount = Math.max(0, toolIndices.length - keep);
+  for (let i = 0; i < staleCount; i++) {
+    const idx = toolIndices[i];
+    if (data.messages[idx].content !== STALE_TOOL_RESULT_MARKER) {
+      data.messages[idx] = { ...data.messages[idx], content: STALE_TOOL_RESULT_MARKER };
+    }
+  }
+}
+
 export function applyTurnInputs(data: SessionData, turnInputs: TurnInput[]): void {
   for (const input of turnInputs) {
     if (input.kind === 'query_result') {
