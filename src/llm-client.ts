@@ -1,3 +1,5 @@
+import { LlmToolCallRejectedError } from './errors';
+
 export interface LlmToolCall {
   id: string;
   type: 'function';
@@ -30,6 +32,14 @@ export interface LlmCompleteParams {
 
 export interface LlmClient {
   complete(params: LlmCompleteParams): Promise<LlmMessage>;
+}
+
+interface OpenAIErrorBody {
+  error?: {
+    code?: string;
+    message?: string;
+    failed_generation?: string;
+  };
 }
 
 export interface OpenAICompatLlmClientOptions {
@@ -102,8 +112,21 @@ export class OpenAICompatLlmClient implements LlmClient {
       }
 
       if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`shard-db-agent: LLM endpoint returned ${response.status} ${response.statusText}: ${body}`);
+        const bodyText = await response.text().catch(() => '');
+        let parsedBody: OpenAIErrorBody | undefined;
+        try {
+          parsedBody = JSON.parse(bodyText) as OpenAIErrorBody;
+        } catch {
+          parsedBody = undefined;
+        }
+        const providerCode = parsedBody?.error?.code;
+        if (providerCode === 'tool_use_failed') {
+          throw new LlmToolCallRejectedError(
+            `shard-db-agent: the model produced a tool call the provider rejected as invalid: ${parsedBody?.error?.message ?? bodyText}`,
+            { providerCode, providerMessage: parsedBody?.error?.message },
+          );
+        }
+        throw new Error(`shard-db-agent: LLM endpoint returned ${response.status} ${response.statusText}: ${bodyText}`);
       }
 
       const json = (await response.json()) as OpenAiChatCompletionResponse;

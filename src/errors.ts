@@ -21,3 +21,20 @@ export class WriteValidationError extends AgentError {
     this.issues = issues;
   }
 }
+
+export interface LlmToolCallRejectedErrorOptions {
+  providerCode?: string;
+  providerMessage?: string;
+}
+
+export class LlmToolCallRejectedError extends AgentError {
+  readonly providerCode?: string;
+  readonly providerMessage?: string;
+
+  constructor(message: string, options: LlmToolCallRejectedErrorOptions = {}) {
+    super(message);
+    this.name = 'LlmToolCallRejectedError';
+    this.providerCode = options.providerCode;
+    this.providerMessage = options.providerMessage;
+  }
+}

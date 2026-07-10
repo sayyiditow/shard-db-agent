@@ -25,7 +25,7 @@ export type {
 } from './types';
 export { isReadQuery, isWriteQuery } from './types';
 
-export { AgentError, InvalidStateError, WriteValidationError } from './errors';
+export { AgentError, InvalidStateError, WriteValidationError, LlmToolCallRejectedError } from './errors';
 
 export type {
   LlmClient,

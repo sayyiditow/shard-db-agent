@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { OpenAICompatLlmClient } from '../src/llm-client';
+import { LlmToolCallRejectedError } from '../src/errors';
 
 function fakeFetch(status: number, body: unknown): typeof fetch {
   return (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
@@ -47,6 +48,27 @@ describe('OpenAICompatLlmClient', () => {
     const fetchImpl = fakeFetch(500, { error: 'boom' });
     const client = new OpenAICompatLlmClient({ baseUrl: 'http://localhost:8080/v1', model: 'm', fetchImpl });
     await expect(client.complete({ messages: [], tools: [] })).rejects.toThrow(/500/);
+  });
+
+  test('throws LlmToolCallRejectedError when the provider reports code: tool_use_failed', async () => {
+    const fetchImpl = fakeFetch(400, {
+      error: {
+        message: 'Failed to call a function. Please adjust your prompt.',
+        type: 'invalid_request_error',
+        code: 'tool_use_failed',
+        failed_generation: '{"op": ">"}',
+      },
+    });
+    const client = new OpenAICompatLlmClient({ baseUrl: 'http://localhost:8080/v1', model: 'm', fetchImpl });
+    await expect(client.complete({ messages: [], tools: [] })).rejects.toBeInstanceOf(LlmToolCallRejectedError);
+  });
+
+  test('a generic non-tool_use_failed 400 still throws a plain Error, not LlmToolCallRejectedError', async () => {
+    const fetchImpl = fakeFetch(400, { error: { message: 'bad request', code: 'invalid_request' } });
+    const client = new OpenAICompatLlmClient({ baseUrl: 'http://localhost:8080/v1', model: 'm', fetchImpl });
+    const promise = client.complete({ messages: [], tools: [] });
+    await expect(promise).rejects.toThrow();
+    await expect(promise).rejects.not.toBeInstanceOf(LlmToolCallRejectedError);
   });
 
   test('throws when the response has no choices', async () => {

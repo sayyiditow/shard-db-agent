@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { AgentError, InvalidStateError, WriteValidationError } from '../src/errors';
+import { AgentError, InvalidStateError, WriteValidationError, LlmToolCallRejectedError } from '../src/errors';
 
 describe('error types', () => {
   test('InvalidStateError is an AgentError and an Error', () => {
@@ -21,5 +21,13 @@ describe('error types', () => {
     const err = new AgentError('generic failure');
     expect(err).toBeInstanceOf(AgentError);
     expect(err).not.toBeInstanceOf(InvalidStateError);
+  });
+
+  test('LlmToolCallRejectedError is an AgentError and carries provider details', () => {
+    const err = new LlmToolCallRejectedError('rejected', { providerCode: 'tool_use_failed', providerMessage: 'bad op' });
+    expect(err).toBeInstanceOf(AgentError);
+    expect(err.name).toBe('LlmToolCallRejectedError');
+    expect(err.providerCode).toBe('tool_use_failed');
+    expect(err.providerMessage).toBe('bad op');
   });
 });
