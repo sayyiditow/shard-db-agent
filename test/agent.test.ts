@@ -871,6 +871,26 @@ describe('Agent.turn', () => {
     expect(toolMessage?.content).toContain('error');
   });
 
+  test('agent.turn() normalizes a content-less assistant message so deserializeState does not reject the serialized state', async () => {
+    const llm = new FakeLlmClient([
+      {
+        role: 'assistant',
+        tool_calls: [findToolCall('call_f1', { dir: 'landscaping', object: 'materials', criteria: [] })],
+      },
+      { role: 'assistant', content: 'done' },
+    ]);
+    const agent = new Agent({ llmClient: llm });
+    const turn1 = await agent.turn(null, 'find', materialsSchema);
+    expect(turn1.kind).toBe('query_request');
+    const state = turn1.state;
+
+    expect(() => deserializeState(state)).not.toThrow();
+    const restored = deserializeState(state);
+    const msg = restored.messages.find((m) => m.role === 'assistant' && m.tool_calls) as LlmMessage | undefined;
+    expect(msg).toBeDefined();
+    expect(msg!.content).toBeNull();
+  });
+
   test('llmMs is a non-negative number on query_request and proposed_write results too', async () => {
     const llmForQuery = new FakeLlmClient([
       {

@@ -111,7 +111,7 @@ export class Agent {
       }
       const callMs = performance.now() - llmStart;
       llmMs += callMs;
-      data.messages.push(assistantMessage);
+      data.messages.push({ ...assistantMessage, content: assistantMessage.content ?? null });
 
       const toolCalls = assistantMessage.tool_calls ?? [];
       if (process.env.AGENT_TRACE) {

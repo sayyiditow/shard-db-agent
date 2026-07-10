@@ -80,6 +80,18 @@ describe('state', () => {
     expect(deserializeState(state)).toEqual(data);
   });
 
+  test('serializeState / deserializeState round-trips a message that has no content key (provider-returned assistant tool-call message)', () => {
+    const data = createInitialSessionData(materialsSchema);
+    data.messages.push({
+      role: 'assistant',
+      tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'find_records', arguments: '{}' } }],
+    });
+    const state = serializeState(data);
+    const restored = deserializeState(state);
+    expect(restored.messages[0].content).toBeUndefined();
+    expect(restored.messages[0].tool_calls).toHaveLength(1);
+  });
+
   test('deserializeState throws InvalidStateError on non-base64 garbage', () => {
     expect(() => deserializeState('!!!not base64!!!')).toThrow(InvalidStateError);
   });

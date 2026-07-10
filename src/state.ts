@@ -56,7 +56,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function isValidMessage(value: unknown): value is LlmMessage {
   if (!isPlainRecord(value)) return false;
   if (typeof value.role !== 'string' || !VALID_ROLES.has(value.role)) return false;
-  if (value.content !== null && typeof value.content !== 'string') return false;
+  if (value.content != null && typeof value.content !== 'string') return false;
   return true;
 }
 
