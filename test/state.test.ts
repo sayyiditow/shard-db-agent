@@ -76,6 +76,45 @@ describe('state', () => {
     expect(() => deserializeState(wrongVersion)).toThrow(InvalidStateError);
   });
 
+  test('deserializeState throws InvalidStateError when a message has an invalid role', () => {
+    const bad = Buffer.from(
+      JSON.stringify({
+        version: 1,
+        schemas: {},
+        pendingWrites: {},
+        messages: [{ role: 'evil', content: 'x' }],
+      }),
+      'utf-8',
+    ).toString('base64');
+    expect(() => deserializeState(bad)).toThrow(InvalidStateError);
+  });
+
+  test('deserializeState throws InvalidStateError when a schemas entry is missing fields', () => {
+    const bad = Buffer.from(
+      JSON.stringify({
+        version: 1,
+        schemas: { 'a/b': { dir: 'a', object: 'b' } },
+        pendingWrites: {},
+        messages: [],
+      }),
+      'utf-8',
+    ).toString('base64');
+    expect(() => deserializeState(bad)).toThrow(InvalidStateError);
+  });
+
+  test('deserializeState throws InvalidStateError when a pendingWrites entry is malformed', () => {
+    const bad = Buffer.from(
+      JSON.stringify({
+        version: 1,
+        schemas: {},
+        messages: [],
+        pendingWrites: { p1: { notBody: true } },
+      }),
+      'utf-8',
+    ).toString('base64');
+    expect(() => deserializeState(bad)).toThrow(InvalidStateError);
+  });
+
   test('applyTurnInputs appends a tool message for query_result keyed by the query id', () => {
     const data = createInitialSessionData(materialsSchema);
     applyTurnInputs(data, [{ kind: 'query_result', id: 'call_abc', data: [{ name: 'Versa-Lok' }] }]);
@@ -128,6 +167,14 @@ describe('state', () => {
     expect(() =>
       applyTurnInputs(data, [{ kind: 'write_outcome', pendingId: 'does-not-exist', outcome: 'committed' }]),
     ).toThrow(InvalidStateError);
+  });
+
+  test('applyTurnInputs treats a "__proto__" pendingId as unknown rather than resolving to Object.prototype', () => {
+    const data = createInitialSessionData(materialsSchema);
+    expect(() =>
+      applyTurnInputs(data, [{ kind: 'write_outcome', pendingId: '__proto__', outcome: 'committed' }]),
+    ).toThrow(InvalidStateError);
+    expect(Object.prototype).not.toHaveProperty('body');
   });
 
   test('pruneStaleToolResults leaves the most recent N tool messages untouched', () => {

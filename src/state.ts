@@ -3,6 +3,7 @@ import { InvalidStateError } from './errors';
 import type { LlmMessage } from './llm-client';
 
 const STATE_VERSION = 1;
+const VALID_ROLES = new Set(['system', 'user', 'assistant', 'tool']);
 
 export interface PendingWrite {
   body: WriteQuery;
@@ -41,13 +42,32 @@ export function serializeState(data: SessionData): string {
   return Buffer.from(JSON.stringify(data), 'utf-8').toString('base64');
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isValidMessage(value: unknown): value is LlmMessage {
+  if (!isPlainRecord(value)) return false;
+  if (typeof value.role !== 'string' || !VALID_ROLES.has(value.role)) return false;
+  if (value.content !== null && typeof value.content !== 'string') return false;
+  return true;
+}
+
+export function isObjectSchemaShape(value: unknown): value is ObjectSchema {
+  return (
+    isPlainRecord(value) &&
+    typeof value.dir === 'string' &&
+    typeof value.object === 'string' &&
+    Array.isArray(value.fields)
+  );
+}
+
+function isValidPendingWrite(value: unknown): value is PendingWrite {
+  return isPlainRecord(value) && typeof value.toolCallId === 'string' && isPlainRecord(value.body);
+}
+
 export function deserializeState(state: string): SessionData {
-  let json: string;
-  try {
-    json = Buffer.from(state, 'base64').toString('utf-8');
-  } catch {
-    throw new InvalidStateError('shard-db-agent: state is not valid base64');
-  }
+  const json = Buffer.from(state, 'base64').toString('utf-8');
 
   let parsed: unknown;
   try {
@@ -66,6 +86,16 @@ export function deserializeState(state: string): SessionData {
     typeof candidate.pendingWrites !== 'object'
   ) {
     throw new InvalidStateError('shard-db-agent: state is missing required fields or has an unsupported version');
+  }
+
+  if (!candidate.messages.every(isValidMessage)) {
+    throw new InvalidStateError('shard-db-agent: state.messages contains a malformed message');
+  }
+  if (!isPlainRecord(candidate.schemas) || !Object.values(candidate.schemas).every(isObjectSchemaShape)) {
+    throw new InvalidStateError('shard-db-agent: state.schemas contains a malformed schema entry');
+  }
+  if (!isPlainRecord(candidate.pendingWrites) || !Object.values(candidate.pendingWrites).every(isValidPendingWrite)) {
+    throw new InvalidStateError('shard-db-agent: state.pendingWrites contains a malformed entry');
   }
 
   return candidate as SessionData;
@@ -101,7 +131,9 @@ export function applyTurnInputs(data: SessionData, turnInputs: TurnInput[]): voi
       continue;
     }
 
-    const pending = data.pendingWrites[input.pendingId];
+    const pending = Object.prototype.hasOwnProperty.call(data.pendingWrites, input.pendingId)
+      ? data.pendingWrites[input.pendingId]
+      : undefined;
     if (!pending) {
       throw new InvalidStateError(
         `shard-db-agent: write_outcome pendingId "${input.pendingId}" does not match any pending write from this session`,
