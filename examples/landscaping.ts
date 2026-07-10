@@ -184,13 +184,19 @@ async function main() {
         console.log(`  → ${turn.summary}`);
         console.log(`  → Object: ${turn.body.dir}/${turn.body.object}`);
         console.log(`  → Mode: ${turn.body.mode}`);
+        if (turn.body.mode === 'insert' || turn.body.mode === 'update') {
+          console.log(`  → Key: ${turn.body.key ?? '(generated on commit)'}`);
+          console.log(`  → Value: ${JSON.stringify(turn.body.value)}`);
+        } else {
+          console.log(`  → Key: ${turn.body.key}`);
+        }
         console.log();
 
         const confirm = await new Promise<string>((resolve) =>
-          rl.question('Press Enter to confirm, or type "reject" to cancel: ', resolve),
+          rl.question('Type "yes" to confirm, or anything else to cancel: ', resolve),
         );
 
-        const outcome = confirm.trim().toLowerCase() === 'reject' ? 'rejected' : 'committed';
+        const outcome = confirm.trim().toLowerCase() === 'yes' ? 'committed' : 'rejected';
 
         // Execute the write if confirmed
         if (outcome === 'committed') {
