@@ -45,14 +45,15 @@ const materialsSchema: ObjectSchema = {
   object: 'materials',
   splits: 8,
   max_key: 64,
-  value_size: 100,
+  max_value: 142,
+  slot_size: 168,
   fields: [
     { name: 'name', type: 'varchar', size: 80 },
     { name: 'unit_price', type: 'double' },
     { name: 'unit', type: 'varchar', size: 10 },
   ],
   indexes: ['category'],
-  counts: { live: 1, tombstoned: 0 },
+  record_count: 0,
 };
 
 // Create an agent pointing at a local LLM (OpenAI-compatible endpoint)
@@ -171,17 +172,17 @@ state = t3.state;
 import { Agent, type ObjectSchema, type TurnInput } from 'shard-db-agent';
 
 const materialsSchema: ObjectSchema = {
-  dir: 'landscaping', object: 'materials', splits: 8, max_key: 64, value_size: 100,
+  dir: 'landscaping', object: 'materials', splits: 8, max_key: 64, max_value: 142, slot_size: 168,
   fields: [
     { name: 'name', type: 'varchar', size: 80 },
     { name: 'unit_price', type: 'double' },
     { name: 'unit', type: 'varchar', size: 10 },
   ],
-  indexes: ['category'], counts: { live: 1, tombstoned: 0 },
+  indexes: ['category'], record_count: 0,
 };
 
 const lineItemsSchema: ObjectSchema = {
-  dir: 'landscaping', object: 'line_items', splits: 8, max_key: 64, value_size: 200,
+  dir: 'landscaping', object: 'line_items', splits: 8, max_key: 64, max_value: 200, slot_size: 232,
   fields: [
     { name: 'estimate_id', type: 'long' },
     { name: 'description', type: 'varchar', size: 80 },
@@ -190,7 +191,7 @@ const lineItemsSchema: ObjectSchema = {
     { name: 'unit_price', type: 'double' },
     { name: 'total', type: 'double' },
   ],
-  indexes: [], counts: { live: 0, tombstoned: 0 },
+  indexes: [], record_count: 0,
 };
 
 const agent = new Agent({
@@ -250,6 +251,8 @@ if (t2.kind === 'proposed_write') {
 | `apiKey` | `string` | Optional API key for the LLM endpoint |
 | `executor` | `(query: ReadQuery) => Promise<unknown>` | Optional callback to auto-run read queries |
 | `maxToolIterations` | `number` | Max tool-use loops per turn (default: 8) |
+| `maxRetainedToolResults` | `number` | Most-recent tool results kept verbatim; older ones replaced with a stale marker (default: 4) |
+| `maxToolResultChars` | `number` | Max characters of a single executor result's JSON before truncation (default: 20000) |
 
 Either `llmClient` or both `baseUrl` + `model` are required.
 
@@ -259,10 +262,10 @@ Either `llmClient` or both `baseUrl` + `model` are required.
 |-------|------|-------------|
 | `state` | `string \| null` | Previous turn's state, or `null` for a new session |
 | `text` | `string \| null` | User's utterance, or `null` when only delivering `turnInputs` |
-| `schema` | `ObjectSchema?` | `describe-object` schema (required on first turn, optional after) |
+| `schema` | `ObjectSchema \| ObjectSchema[]?` | One or more `describe-object` schemas (required on first turn, optional after). Pass an array to seed multiple object types at once. |
 | `turnInputs` | `TurnInput[]?` | Query results and/or write outcomes from the previous turn |
 
-Returns `Promise<AgentTurnResult>` — one of `query_request`, `answer`, or `proposed_write`.
+Returns `Promise<AgentTurnResult>` — one of `query_request`, `answer`, or `proposed_write`. All result kinds also include `llmMs: number` — the LLM response time in milliseconds for that turn.
 
 ### LLM client seam
 
@@ -281,16 +284,27 @@ const myClient: LlmClient = {
 const agent = new Agent({ llmClient: myClient });
 ```
 
+### `mintKey(pendingId)`
+
+Deterministic key for idempotent inserts. Maps a `pendingId` to the same key every call, so double-confirms and network retries produce a no-op duplicate.
+
+```typescript
+import { mintKey } from 'shard-db-agent';
+
+const key = mintKey('p1'); // → same key every time for 'p1'
+```
+
 ### Error handling
 
 All failures throw:
 
 - **`Error`** — LLM failure (timeout, bad response), executor failure, or max iterations exceeded
+- **`LlmToolCallRejectedError`** — provider rejected a tool call (e.g. invalid arguments). The agent auto-retries, so this usually doesn't reach the host. Contains `providerMessage` for diagnostics.
 - **`InvalidStateError`** — corrupted or version-mismatched state blob (start a fresh session)
 - **`WriteValidationError`** — agent's proposed write failed schema validation (shouldn't reach host)
 
 ```typescript
-import { Agent, InvalidStateError, WriteValidationError } from 'shard-db-agent';
+import { Agent, InvalidStateError, LlmToolCallRejectedError, WriteValidationError } from 'shard-db-agent';
 
 try {
   const result = await agent.turn(state, text, schema);
