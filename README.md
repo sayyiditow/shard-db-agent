@@ -1,5 +1,8 @@
 # shard-db-agent
 
+[![npm version](https://img.shields.io/npm/v/shard-db-agent)](https://www.npmjs.com/package/shard-db-agent)
+[![License](https://img.shields.io/npm/l/shard-db-agent)](LICENSE)
+
 A stateful, schema-agnostic natural-language agent for [shard-db](https://github.com/sayyiditow/shard-db). Describe what you want in plain English; get back a proposed query or write instead of hand-writing JSON or NQL.
 
 ## What it does
