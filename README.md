@@ -325,10 +325,6 @@ try {
 }
 ```
 
-## Design
-
-See [`docs/plans/2026-07-06-shard-db-agent-design.md`](docs/plans/2026-07-06-shard-db-agent-design.md) for the full design spec (architecture, decisions, error handling, testing).
-
 ## License
 
 MIT
