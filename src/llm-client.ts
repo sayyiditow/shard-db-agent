@@ -83,7 +83,11 @@ export class OpenAICompatLlmClient implements LlmClient {
   private readonly sleepImpl: (ms: number) => Promise<void>;
 
   constructor(options: OpenAICompatLlmClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    let trimmed = options.baseUrl;
+    while (trimmed.endsWith('/')) {
+      trimmed = trimmed.slice(0, -1);
+    }
+    this.baseUrl = trimmed;
     this.model = options.model;
     this.apiKey = options.apiKey;
     this.fetchImpl = options.fetchImpl ?? fetch;
