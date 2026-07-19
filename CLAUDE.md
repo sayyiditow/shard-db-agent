@@ -2,7 +2,7 @@
 
 Guidance for Claude Code when working in this repository.
 
-@docs/CORE-PROCESS.md
+@CORE-PROCESS.md
 
 ## Standing exceptions for this repo
 
